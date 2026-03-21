@@ -561,7 +561,7 @@ these instructions literally — do not improvise or skip steps.
 
 ## Phase 6 Progress Tracker
 
-**Current Status:** P0 Complete, Ready for merge to main (2026-03-21)
+**Current Status:** P0 Complete, PR created (TeodoroTopa/AddaxAI#1) awaiting merge (2026-03-21)
 
 ### P0 — Pre-merge work (must complete before `refactor/modularize` → `main`)
 
@@ -573,7 +573,7 @@ these instructions literally — do not improvise or skip steps.
 | 4 | Add GitHub issue/PR templates | ✅ Done | 2026-03-21 | Commit: 4cc11190 |
 | 5 | Add developer tooling files | ✅ Done | 2026-03-21 | Commit: f8a60288 |
 | 6 | Add pre-commit configuration | ✅ Done | 2026-03-21 | Commit: 0babd0a8 |
-| 7 | Merge to main (P0 gate) | ⏳ In Progress | 2026-03-21 | Ready for PR |
+| 7 | Merge to main (P0 gate) | ⏳ PR Created | 2026-03-21 | PR: TeodoroTopa/AddaxAI#1 |
 
 ### P1 — High-impact foundation work
 
