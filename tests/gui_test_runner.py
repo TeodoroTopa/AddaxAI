@@ -33,14 +33,14 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-gui_path = os.path.join(REPO_ROOT, "AddaxAI_GUI.py")
+gui_path = os.path.join(REPO_ROOT, "addaxai", "app.py")
 
 with open(gui_path, "r", encoding="utf-8") as f:
     source = f.read()
 
 # Patch AddaxAI_files path
 source = source.replace(
-    "AddaxAI_files = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))",
+    "AddaxAI_files = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))",
     f"AddaxAI_files = r'{ADDAXAI_FILES}'"
 )
 

@@ -9,7 +9,7 @@ import os
 def get_base_path(script_file: str) -> str:
     """Derive the AddaxAI base path from a script file location.
 
-    Assumes the script is at base/AddaxAI/script.py, so base is two levels up.
+    Assumes the script is at base/AddaxAI/addaxai/app.py, so base is three levels up.
 
     Args:
         script_file: Absolute path to the calling script file.
@@ -17,7 +17,7 @@ def get_base_path(script_file: str) -> str:
     Returns:
         Absolute path to the AddaxAI root directory.
     """
-    return os.path.dirname(os.path.dirname(os.path.realpath(script_file)))
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(script_file))))
 
 
 def get_cls_dir(base_path: str) -> str:
