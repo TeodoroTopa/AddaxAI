@@ -26,8 +26,12 @@ test = [
 gui = [
     "customtkinter",
 ]
+api = [
+    "fastapi",
+    "uvicorn",
+]
 dev = [
-    "addaxai[test,gui]",
+    "addaxai[test,gui,api]",
     "pre-commit",
 ]
 
