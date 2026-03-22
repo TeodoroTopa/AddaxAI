@@ -1,0 +1,119 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AddaxAI Model Variables Schema",
+  "description": "Configuration schema for per-model variables (variables.json in model directories)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "model_type": {
+      "type": "string",
+      "description": "Model type identifier (e.g., 'SpeciesNet', 'DeepFaune')"
+    },
+    "framework": {
+      "type": "string",
+      "description": "ML framework used (pytorch, tensorflow, onnx)",
+      "enum": ["pytorch", "tensorflow", "onnx"]
+    },
+    "model_fname": {
+      "type": "string",
+      "description": "Filename of the model checkpoint or weights"
+    },
+    "type": {
+      "type": "string",
+      "description": "Model purpose type (e.g., 'cls', 'det')"
+    },
+    "env": {
+      "type": "string",
+      "description": "Conda environment name or specification"
+    },
+    "download_info": {
+      "type": "object",
+      "description": "Model download information",
+      "additionalProperties": true,
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "Download URL for model weights"
+        },
+        "size": {
+          "type": "number",
+          "description": "Download size in bytes"
+        }
+      }
+    },
+    "total_download_size": {
+      "type": "number",
+      "description": "Total download size in bytes"
+    },
+    "min_version": {
+      "type": "string",
+      "description": "Minimum AddaxAI version required"
+    },
+    "all_classes": {
+      "type": "array",
+      "description": "List of all species/classes this model can classify",
+      "items": {
+        "type": "string"
+      }
+    },
+    "selected_classes": {
+      "type": "array",
+      "description": "Currently selected classes for classification",
+      "items": {
+        "type": "string"
+      }
+    },
+    "var_cls_detec_thresh": {
+      "type": "number",
+      "description": "Detection confidence threshold for this classifier",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "var_cls_detec_thresh_default": {
+      "type": "number",
+      "description": "Default detection threshold for this classifier",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "var_cls_class_thresh": {
+      "type": "number",
+      "description": "Classification confidence threshold",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "var_cls_class_thresh_default": {
+      "type": "number",
+      "description": "Default classification threshold",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "var_smooth_cls_animal": {
+      "type": "boolean",
+      "description": "Whether to smooth classifications across image series"
+    },
+    "var_tax_levels_idx": {
+      "type": "integer",
+      "description": "Taxonomy level index for classification"
+    },
+    "full_image_cls": {
+      "type": "boolean",
+      "description": "Whether this model classifies full images instead of crops"
+    },
+    "taxon_mapping_csv": {
+      "type": "string",
+      "description": "URL to taxonomy mapping CSV file"
+    },
+    "info_url": {
+      "type": "string",
+      "description": "URL to model information/documentation"
+    },
+    "developer": {
+      "type": "string",
+      "description": "Name of the model developer"
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of the model"
+    }
+  }
+}
