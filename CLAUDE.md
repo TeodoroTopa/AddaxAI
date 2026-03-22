@@ -551,19 +551,56 @@ specifies the branch, files to create/modify, success criteria, and when to comm
 these instructions literally — do not improvise or skip steps.
 
 **Branch strategy:**
-- All P0 work happens on `refactor/modularize` (the current branch).
-- After P0 is done, merge `refactor/modularize` → `main` via PR.
-- All P1/P2/P3 work happens on feature branches off `main`, named
+- P0 work is done — it was merged to `main` via PR#1 on 2026-03-22.
+- All remaining work (P1/P2/P3) happens on feature branches off `main`, named
   `phase6/<item>` (e.g. `phase6/json-schemas`, `phase6/event-bus`).
 - Each feature branch merges to `main` via PR when its success criteria pass.
+
+**CRITICAL — Git workflow for every step:**
+This repo is a fork. There are two remotes:
+- `origin` → `TeodoroTopa/AddaxAI` (YOUR FORK — push here, open PRs here)
+- `upstream` → `PetervanLunteren/AddaxAI` (ORIGINAL — never push here, never open PRs here)
+
+For each step that creates a feature branch, follow this exact sequence:
+```bash
+# 1. Start from latest main
+git checkout main
+git pull origin main
+
+# 2. Create the feature branch
+git checkout -b phase6/<branch-name>
+
+# 3. ... do the work, make commits ...
+
+# 4. Push to YOUR FORK (origin), not upstream
+git push -u origin phase6/<branch-name>
+
+# 5. Create PR on YOUR FORK — MUST use --repo flag to avoid targeting upstream
+gh pr create \
+  --repo TeodoroTopa/AddaxAI \
+  --base main \
+  --title "feat: <title>" \
+  --body "<body>"
+
+# 6. Wait for CI, then merge on YOUR FORK
+gh pr merge <PR_NUMBER> --repo TeodoroTopa/AddaxAI --merge --delete-branch
+
+# 7. Return to main for the next step
+git checkout main
+git pull origin main
+```
+
+**NEVER run `gh pr create` without `--repo TeodoroTopa/AddaxAI`.** Without it, `gh`
+defaults to the upstream repo (PetervanLunteren/AddaxAI), which creates unwanted PRs
+on someone else's repository.
 
 ---
 
 ## Phase 6 Progress Tracker
 
-**Current Status:** P0 Complete, PR created (TeodoroTopa/AddaxAI#1) awaiting merge (2026-03-21)
+**Current Status:** P0 merged to main (2026-03-22). P1 work next.
 
-### P0 — Pre-merge work (must complete before `refactor/modularize` → `main`)
+### P0 — Pre-merge work — COMPLETE
 
 | Step | Task | Status | Date | Notes |
 |------|------|--------|------|-------|
@@ -573,13 +610,13 @@ these instructions literally — do not improvise or skip steps.
 | 4 | Add GitHub issue/PR templates | ✅ Done | 2026-03-21 | Commit: 4cc11190 |
 | 5 | Add developer tooling files | ✅ Done | 2026-03-21 | Commit: f8a60288 |
 | 6 | Add pre-commit configuration | ✅ Done | 2026-03-21 | Commit: 0babd0a8 |
-| 7 | Merge to main (P0 gate) | ⏳ PR Created | 2026-03-21 | PR: TeodoroTopa/AddaxAI#1 |
+| 7 | Merge to main (P0 gate) | ✅ Done | 2026-03-22 | PR#1 merged, branch deleted |
 
 ### P1 — High-impact foundation work
 
 | Step | Task | Status | Date | Notes |
 |------|------|--------|------|-------|
-| 8 | JSON schema validation (6.3) | ⏳ Pending | — | Branch: `phase6/json-schemas` after merge |
+| 8 | JSON schema validation (6.3) | ⏳ Pending | — | Branch: `phase6/json-schemas` |
 | 9 | Integration test fixtures (6.5) | ⏳ Pending | — | Branch: `phase6/test-fixtures` |
 | 10 | Model adapter protocol (6.4) | ⏳ Pending | — | Branch: `phase6/model-protocol` |
 | 11 | Event bus infrastructure (6.6) | ⏳ Pending | — | Branch: `phase6/event-bus` (multi-commit) |
@@ -594,351 +631,24 @@ these instructions literally — do not improvise or skip steps.
 
 ---
 
-### Step 1: Create `pyproject.toml` (part of 6.1)
+### Steps 1–7: P0 — COMPLETED (2026-03-22)
 
-**Branch:** `refactor/modularize`
+Steps 1–7 created `pyproject.toml`, CI jobs (mypy, coverage), GitHub issue/PR templates,
+`.editorconfig`, `Makefile`, `addaxai/py.typed`, and `.pre-commit-config.yaml`. All were
+merged to `main` via PR#1 on the fork. The `refactor/modularize` branch was deleted.
 
-1. Create `pyproject.toml` at the repo root with this content:
-
-```toml
-[build-system]
-requires = ["setuptools>=64"]
-build-backend = "setuptools.backends._legacy:_Backend"
-
-[project]
-name = "addaxai"
-version = "5.0.0"
-description = "Camera trap image classification for ecologists"
-readme = "README.md"
-license = {text = "MIT"}
-requires-python = ">=3.8"
-dependencies = [
-    "numpy",
-    "pandas",
-    "requests",
-    "Pillow",
-]
-
-[project.optional-dependencies]
-test = [
-    "pytest",
-    "pytest-cov",
-    "ruff",
-    "mypy",
-]
-gui = [
-    "customtkinter",
-]
-dev = [
-    "addaxai[test,gui]",
-    "pre-commit",
-]
-
-[tool.mypy]
-python_version = "3.8"
-ignore_missing_imports = true
-no_strict_optional = true
-warn_return_any = true
-warn_unused_configs = true
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "--ignore=tests/test_gui_smoke.py --ignore=tests/test_gui_integration.py --ignore=tests/gui_test_runner.py"
-```
-
-2. Verify: run `.venv/Scripts/python -m pytest` (no extra flags needed — `pyproject.toml`
-   provides defaults). All 325+ tests pass.
-
-3. Commit: `chore: add pyproject.toml with project metadata and tool config`
-
----
-
-### Step 2: Add mypy job to CI (part of 6.2)
-
-**Branch:** `refactor/modularize`
-
-1. Edit `.github/workflows/test.yml`. Add this job after the `lint` job:
-
-```yaml
-  typecheck:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - run: pip install mypy numpy pandas requests Pillow
-
-      - name: Type-check addaxai/
-        run: mypy addaxai/ --ignore-missing-imports --no-strict-optional
-```
-
-2. Also update the `test` job's dependency install step to use the optional deps:
-
-```yaml
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pytest pytest-cov numpy pandas requests Pillow
-```
-
-3. Verify locally: run `.venv/Scripts/mypy addaxai/ --ignore-missing-imports --no-strict-optional`.
-   Must exit 0 with no errors.
-
-4. Commit: `ci: add mypy type-checking job to CI pipeline`
-
----
-
-### Step 3: Add coverage reporting to CI (part of 6.2)
-
-**Branch:** `refactor/modularize`
-
-1. Edit `.github/workflows/test.yml`. In the `test` job, change the pytest run step to:
-
-```yaml
-      - name: Run unit tests with coverage
-        run: |
-          python -m pytest tests/ -v \
-            --ignore=tests/test_gui_smoke.py \
-            --ignore=tests/test_gui_integration.py \
-            --ignore=tests/gui_test_runner.py \
-            --cov=addaxai --cov-report=xml --cov-report=term-missing
-```
-
-2. Add a step after the test step to upload coverage (only on one Python version to
-   avoid duplicate uploads):
-
-```yaml
-      - name: Upload coverage
-        if: matrix.python-version == '3.11'
-        uses: codecov/codecov-action@v4
-        with:
-          file: ./coverage.xml
-          fail_ci_if_error: false
-```
-
-3. Commit: `ci: add pytest-cov coverage reporting and Codecov upload`
-
----
-
-### Step 4: Add GitHub issue and PR templates (part of 6.1)
-
-**Branch:** `refactor/modularize`
-
-1. Create `.github/ISSUE_TEMPLATE/bug_report.yml`:
-
-```yaml
-name: Bug Report
-description: Report a bug in AddaxAI
-labels: ["bug"]
-body:
-  - type: input
-    id: os
-    attributes:
-      label: Operating System
-      placeholder: "e.g. Windows 11, macOS 14.2"
-    validations:
-      required: true
-  - type: input
-    id: python-version
-    attributes:
-      label: Python Version
-      placeholder: "e.g. 3.8.19 (env-base)"
-    validations:
-      required: true
-  - type: input
-    id: model
-    attributes:
-      label: Model Used
-      placeholder: "e.g. MegaDetector v5a, DeepFaune v1.4"
-  - type: textarea
-    id: description
-    attributes:
-      label: What happened?
-      description: Describe the bug. Include error messages if any.
-    validations:
-      required: true
-  - type: textarea
-    id: steps
-    attributes:
-      label: Steps to reproduce
-      description: Minimal steps to trigger the bug.
-    validations:
-      required: true
-  - type: textarea
-    id: expected
-    attributes:
-      label: Expected behavior
-```
-
-2. Create `.github/ISSUE_TEMPLATE/feature_request.yml`:
-
-```yaml
-name: Feature Request
-description: Suggest a new feature or enhancement
-labels: ["enhancement"]
-body:
-  - type: textarea
-    id: description
-    attributes:
-      label: What would you like?
-      description: Describe the feature and why it would be useful.
-    validations:
-      required: true
-  - type: textarea
-    id: alternatives
-    attributes:
-      label: Alternatives considered
-      description: Any workarounds or alternative approaches you've tried.
-```
-
-3. Create `.github/pull_request_template.md`:
-
-```markdown
-## Summary
-<!-- 1-3 bullet points describing what this PR does and why -->
-
-## Test plan
-<!-- How did you verify this works? Check all that apply: -->
-- [ ] Unit tests pass (`pytest tests/`)
-- [ ] Lint passes (`ruff check addaxai/`)
-- [ ] Type check passes (`mypy addaxai/ --ignore-missing-imports --no-strict-optional`)
-- [ ] GUI smoke test passes (manual or `pytest tests/test_gui_smoke.py`)
-- [ ] Tested manually in the GUI
-
-## Checklist
-- [ ] No new `global` declarations (use `AppState` instead)
-- [ ] Type hints use `typing` generics (Python 3.8 compatible)
-- [ ] Updated CLAUDE.md if architecture or conventions changed
-```
-
-4. Commit: `chore: add GitHub issue templates and PR template`
-
----
-
-### Step 5: Add developer tooling files (part of 6.8)
-
-**Branch:** `refactor/modularize`
-
-1. Create `.editorconfig` at repo root:
-
-```ini
-root = true
-
-[*]
-indent_style = space
-indent_size = 4
-end_of_line = lf
-charset = utf-8
-trim_trailing_whitespace = true
-insert_final_newline = true
-
-[*.{yml,yaml}]
-indent_size = 2
-
-[*.{json,toml}]
-indent_size = 2
-
-[Makefile]
-indent_style = tab
-```
-
-2. Create `Makefile` at repo root (use tabs for indentation, not spaces):
-
-```makefile
-.PHONY: test lint typecheck dev test-gui test-smoke
-
-VENV_PYTHON = .venv/Scripts/python
-GUI_PYTHON = C:/Users/Topam/AddaxAI_files/envs/env-base/python.exe
-
-test:
-	$(VENV_PYTHON) -m pytest tests/ -v
-
-lint:
-	$(VENV_PYTHON) -m ruff check addaxai/
-
-typecheck:
-	$(VENV_PYTHON) -m mypy addaxai/ --ignore-missing-imports --no-strict-optional
-
-test-gui:
-	$(GUI_PYTHON) -m pytest tests/test_gui_integration.py -v
-
-test-smoke:
-	$(GUI_PYTHON) -m pytest tests/test_gui_smoke.py -v
-
-dev:
-	$(GUI_PYTHON) dev_launch.py
-
-all: lint typecheck test
-```
-
-3. Create `addaxai/py.typed` as an empty file (zero bytes). This is a PEP 561 marker
-   that tells type checkers this package ships inline type annotations.
-
-4. Commit: `chore: add .editorconfig, Makefile, and py.typed marker`
-
----
-
-### Step 6: Add pre-commit configuration (part of 6.2)
-
-**Branch:** `refactor/modularize`
-
-1. Create `.pre-commit-config.yaml` at repo root:
-
-```yaml
-repos:
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
-    hooks:
-      - id: trailing-whitespace
-      - id: end-of-file-fixer
-      - id: check-yaml
-      - id: check-json
-
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.3.0
-    hooks:
-      - id: ruff
-        args: [--fix]
-
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.8.0
-    hooks:
-      - id: mypy
-        args: [--ignore-missing-imports, --no-strict-optional]
-        additional_dependencies: [numpy, pandas-stubs, types-requests]
-        files: ^addaxai/
-```
-
-2. Do NOT run `pre-commit install` — that modifies the user's local git hooks.
-   Just commit the config file so contributors can opt in.
-
-3. Commit: `chore: add pre-commit configuration`
-
----
-
-### Step 7: Merge `refactor/modularize` → `main` (P0 gate)
-
-**This is the merge point.** All P0 work is complete.
-
-1. Open a PR from `refactor/modularize` → `main` on `TeodoroTopa/AddaxAI`.
-   Title: `refactor: complete Phases 1–6 (P0) — modular architecture + CI + DX`
-   Body: summarize Phases 1–5 (already done) plus the P0 items from Phase 6
-   (pyproject.toml, CI fixes, templates, tooling).
-
-2. Verify CI passes on the PR (unit tests, lint, mypy).
-
-3. Merge the PR. From this point forward, `main` is the base branch for all new work.
-
-4. After merge, delete the `refactor/modularize` branch.
+**Do not re-execute steps 1–7.** Start from Step 8 below.
 
 ---
 
 ### Step 8: JSON schema validation (6.3)
 
-**Branch:** Create `phase6/json-schemas` off `main`.
+**Branch setup** (run these exact commands before starting work):
+```bash
+git checkout main
+git pull origin main
+git checkout -b phase6/json-schemas
+```
 
 1. Create directory `addaxai/schemas/`.
 
@@ -1036,13 +746,29 @@ def validate_global_vars(data: Dict[str, Any]) -> Tuple[bool, List[str]]:
 
 10. Commit: `feat: add JSON schema validation for config and recognition output`
 
-11. Open PR `phase6/json-schemas` → `main`. Merge when CI passes.
+11. Push and create PR on YOUR FORK, then merge:
+```bash
+git push -u origin phase6/json-schemas
+gh pr create --repo TeodoroTopa/AddaxAI --base main \
+  --title "feat: add JSON schema validation for config and recognition output" \
+  --body "Adds JSON schemas for global_vars, model_vars, and recognition output. Includes validate.py with manual validation (no jsonschema dependency) and 12-15 tests."
+# Wait for CI to pass, then:
+gh pr merge <PR_NUMBER> --repo TeodoroTopa/AddaxAI --merge --delete-branch
+git checkout main && git pull origin main
+```
+
+12. Update the progress tracker in CLAUDE.md: mark Step 8 as ✅ Done with the date.
 
 ---
 
 ### Step 9: Integration test fixtures (6.5)
 
-**Branch:** Create `phase6/test-fixtures` off `main`.
+**Branch setup:**
+```bash
+git checkout main
+git pull origin main
+git checkout -b phase6/test-fixtures
+```
 
 1. Add fixture images to `tests/fixtures/images/`. You need 3–5 small JPEG images
    (< 200KB each). Options:
@@ -1106,13 +832,29 @@ def validate_global_vars(data: Dict[str, Any]) -> Tuple[bool, List[str]]:
 
 6. Commit: `feat: add integration test fixtures and pipeline/export tests`
 
-7. Open PR `phase6/test-fixtures` → `main`. Merge when CI passes.
+7. Push and create PR on YOUR FORK, then merge:
+```bash
+git push -u origin phase6/test-fixtures
+gh pr create --repo TeodoroTopa/AddaxAI --base main \
+  --title "feat: add integration test fixtures and pipeline/export tests" \
+  --body "Adds fixture images (synthetic via Pillow), golden output JSON, and tests for move_files(), CSV export, and COCO export round-trips."
+# Wait for CI to pass, then:
+gh pr merge <PR_NUMBER> --repo TeodoroTopa/AddaxAI --merge --delete-branch
+git checkout main && git pull origin main
+```
+
+8. Update the progress tracker in CLAUDE.md: mark Step 9 as ✅ Done with the date.
 
 ---
 
 ### Step 10: Model adapter protocol (6.4)
 
-**Branch:** Create `phase6/model-protocol` off `main`.
+**Branch setup:**
+```bash
+git checkout main
+git pull origin main
+git checkout -b phase6/model-protocol
+```
 
 1. Create `addaxai/models/backend.py`:
 
@@ -1286,13 +1028,29 @@ class InferenceBackend(Protocol):
 
 5. Commit: `feat: add InferenceBackend protocol and model adapter template`
 
-6. Open PR `phase6/model-protocol` → `main`. Merge when CI passes.
+6. Push and create PR on YOUR FORK, then merge:
+```bash
+git push -u origin phase6/model-protocol
+gh pr create --repo TeodoroTopa/AddaxAI --base main \
+  --title "feat: add InferenceBackend protocol and model adapter template" \
+  --body "Defines the InferenceBackend typing.Protocol in addaxai/models/backend.py and adds an annotated template adapter in classification_utils/model_types/_template/."
+# Wait for CI to pass, then:
+gh pr merge <PR_NUMBER> --repo TeodoroTopa/AddaxAI --merge --delete-branch
+git checkout main && git pull origin main
+```
+
+7. Update the progress tracker in CLAUDE.md: mark Step 10 as ✅ Done with the date.
 
 ---
 
 ### Step 11: Event bus (6.6)
 
-**Branch:** Create `phase6/event-bus` off `main`.
+**Branch setup:**
+```bash
+git checkout main
+git pull origin main
+git checkout -b phase6/event-bus
+```
 
 This is the most complex step. Take it in sub-commits.
 
@@ -1468,13 +1226,29 @@ This sub-step modifies `AddaxAI_GUI.py`. Be careful — this file is large and f
 11. Repeat sub-step 11c for `classify_detections()` and `start_postprocess()` in
     separate commits.
 
-12. Open PR `phase6/event-bus` → `main`. Merge when CI passes.
+12. Push and create PR on YOUR FORK, then merge:
+```bash
+git push -u origin phase6/event-bus
+gh pr create --repo TeodoroTopa/AddaxAI --base main \
+  --title "feat: add event bus infrastructure with deploy_model wiring" \
+  --body "Adds EventBus class, standard event type constants, and dual-write event emissions in deploy_model(), classify_detections(), and start_postprocess()."
+# Wait for CI to pass, then:
+gh pr merge <PR_NUMBER> --repo TeodoroTopa/AddaxAI --merge --delete-branch
+git checkout main && git pull origin main
+```
+
+13. Update the progress tracker in CLAUDE.md: mark Step 11 as ✅ Done with the date.
 
 ---
 
 ### Step 12: View protocols (part of 6.6b)
 
-**Branch:** Create `phase6/view-protocols` off `main`.
+**Branch setup:**
+```bash
+git checkout main
+git pull origin main
+git checkout -b phase6/view-protocols
+```
 
 1. Create `addaxai/ui/protocols.py`:
 
@@ -1542,13 +1316,29 @@ class ResultsView(Protocol):
 
 4. Commit: `feat: add view protocols for UI decoupling (DeployView, PostprocessView, HITLView, ResultsView)`
 
-5. Open PR `phase6/view-protocols` → `main`. Merge when CI passes.
+5. Push and create PR on YOUR FORK, then merge:
+```bash
+git push -u origin phase6/view-protocols
+gh pr create --repo TeodoroTopa/AddaxAI --base main \
+  --title "feat: add view protocols for UI decoupling" \
+  --body "Adds runtime_checkable Protocol classes (DeployView, PostprocessView, HITLView, ResultsView) in addaxai/ui/protocols.py with tests."
+# Wait for CI to pass, then:
+gh pr merge <PR_NUMBER> --repo TeodoroTopa/AddaxAI --merge --delete-branch
+git checkout main && git pull origin main
+```
+
+6. Update the progress tracker in CLAUDE.md: mark Step 12 as ✅ Done with the date.
 
 ---
 
 ### Step 13: Rename and break apart the GUI file (6.6b)
 
-**Branch:** Create `phase6/gui-restructure` off `main`.
+**Branch setup:**
+```bash
+git checkout main
+git pull origin main
+git checkout -b phase6/gui-restructure
+```
 
 This is the highest-risk step. Take it in sub-commits, run the GUI smoke test after each.
 
@@ -1657,13 +1447,29 @@ Wait until step 11 (event bus) is merged and the dual-write emit calls are in
 **Sub-step 13c–e:** Repeat for postprocessing UI, HITL UI, and results viewer.
 Each is a separate commit. Run all tests after each.
 
-6. Open PR `phase6/gui-restructure` → `main`. Merge when CI passes.
+6. Push and create PR on YOUR FORK, then merge:
+```bash
+git push -u origin phase6/gui-restructure
+gh pr create --repo TeodoroTopa/AddaxAI --base main \
+  --title "refactor: rename AddaxAI_GUI.py to addaxai/app.py and extract feature UI modules" \
+  --body "Renames the monolith to addaxai/app.py, extracts deploy/postprocess/HITL/results UI modules implementing view protocols. All tests (unit, smoke, integration) pass."
+# Wait for CI to pass, then:
+gh pr merge <PR_NUMBER> --repo TeodoroTopa/AddaxAI --merge --delete-branch
+git checkout main && git pull origin main
+```
+
+7. Update the progress tracker in CLAUDE.md: mark Step 13 as ✅ Done with the date.
 
 ---
 
 ### Step 14: REST API layer (6.7)
 
-**Branch:** Create `phase6/rest-api` off `main`.
+**Branch setup:**
+```bash
+git checkout main
+git pull origin main
+git checkout -b phase6/rest-api
+```
 
 This depends on step 11 (event bus) being merged.
 
@@ -1753,7 +1559,18 @@ def health() -> Dict[str, str]:
 
 7. Commit: `feat: add read-only REST API layer (GET /models, /results, /health)`
 
-8. Open PR `phase6/rest-api` → `main`. Merge when CI passes.
+8. Push and create PR on YOUR FORK, then merge:
+```bash
+git push -u origin phase6/rest-api
+gh pr create --repo TeodoroTopa/AddaxAI --base main \
+  --title "feat: add read-only REST API layer" \
+  --body "Adds FastAPI server with GET /models, /results/{folder}, and /health endpoints. Tests skip when fastapi is not installed."
+# Wait for CI to pass, then:
+gh pr merge <PR_NUMBER> --repo TeodoroTopa/AddaxAI --merge --delete-branch
+git checkout main && git pull origin main
+```
+
+9. Update the progress tracker in CLAUDE.md: mark Step 14 as ✅ Done with the date.
 
 ---
 
