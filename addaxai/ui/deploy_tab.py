@@ -7,6 +7,19 @@ The class implements the DeployView protocol to abstract the UI from orchestrati
 
 from typing import Any, Callable, List, Optional
 
+try:
+    from tkinter import Button
+except ImportError:
+    Button = None  # type: ignore
+
+from addaxai.core.events import event_bus
+from addaxai.core.event_types import (
+    DEPLOY_STARTED,
+    DEPLOY_PROGRESS,
+    DEPLOY_FINISHED,
+    DEPLOY_ERROR,
+    DEPLOY_CANCELLED,
+)
 from addaxai.i18n import t
 
 
@@ -36,17 +49,33 @@ class DeployTab:
         self._button_ref: Optional[Any] = None
         self._progress_label_ref: Optional[Any] = None
 
-    def _create_button(self, button_class: Any) -> Any:
-        """Create the start deploy button.
+        # Subscribe to deployment events
+        event_bus.on(DEPLOY_PROGRESS, self._on_deploy_progress)
+        event_bus.on(DEPLOY_ERROR, self._on_deploy_error)
+        event_bus.on(DEPLOY_FINISHED, self._on_deploy_finished)
 
-        Args:
-            button_class: The Button class to use (tk.Button or customtkinter.CTkButton).
+    def _on_deploy_progress(self, pct: float, message: str) -> None:
+        """Handle deployment progress event."""
+        self.show_progress(pct, message)
+
+    def _on_deploy_error(self, message: str, **kwargs: Any) -> None:
+        """Handle deployment error event."""
+        self.show_error(message)
+
+    def _on_deploy_finished(self, results_path: str, **kwargs: Any) -> None:
+        """Handle deployment finished event."""
+        self.show_completion(results_path)
+
+    def create_button(self) -> Any:
+        """Create and return the start deploy button.
 
         Returns:
             The created button widget.
         """
+        if Button is None:
+            raise ImportError("tkinter.Button not available")
         row = 12
-        btn = button_class(
+        btn = Button(
             self.parent_frame,
             text=t("btn_start_deploy"),
             command=self.start_deploy_callback,

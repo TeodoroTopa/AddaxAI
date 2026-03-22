@@ -194,6 +194,9 @@ from addaxai.ui.dialogs.download_progress import EnvDownloadProgressWindow, Mode
 from addaxai.ui.dialogs.info_frames import ModelInfoFrame as model_info_frame, DonationPopupFrame as donation_popup_frame
 from addaxai.ui.dialogs.progress import ProgressWindow
 from addaxai.ui.dialogs.speciesnet_output import SpeciesNetOutputWindow
+from addaxai.ui.deploy_tab import DeployTab
+from addaxai.ui.postprocess_tab import PostprocessTab
+from addaxai.ui.hitl_window import HITLWindow
 from addaxai.ui.advanced.help_tab import HyperlinkManager, write_help_tab
 from addaxai.ui.advanced.about_tab import write_about_tab
 from addaxai.ui.simple.simple_window import build_simple_mode
@@ -8223,6 +8226,10 @@ btn_start_deploy = Button(snd_step, text=t('btn_start_deploy'), command=start_de
 btn_start_deploy.grid(row=row_btn_start_deploy, column=0, columnspan=2, sticky='ew')
 state.btn_start_deploy = btn_start_deploy
 
+# Instantiate DeployTab view and register button
+deploy_view = DeployTab(snd_step, start_deploy, app_state=state)
+deploy_view.set_button_ref(btn_start_deploy)
+
 ### human-in-the-loop step
 trd_step_row = 1
 trd_step = LabelFrame(deploy_scrollable_frame, text=" " + t('trd_step') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, fg=green_primary, borderwidth=2)
@@ -8230,6 +8237,9 @@ trd_step.configure(font=(text_font, first_level_frame_font_size, "bold"))
 trd_step.grid(column=1, row=trd_step_row, sticky='nesw')
 trd_step.columnconfigure(0, weight=1, minsize=label_width)
 trd_step.columnconfigure(1, weight=1, minsize=widget_width)
+
+# Instantiate HITLWindow view
+hitl_view = HITLWindow(trd_step, app_state=state)
 
 # human-in-the-loop
 row_hitl_main = 0
@@ -8245,6 +8255,9 @@ fth_step.configure(font=(text_font, first_level_frame_font_size, "bold"))
 fth_step.grid(column=1, row=fth_step_row, sticky='nesw')
 fth_step.columnconfigure(0, weight=1, minsize=label_width)
 fth_step.columnconfigure(1, weight=1, minsize=widget_width)
+
+# Instantiate PostprocessTab view
+postprocess_view = PostprocessTab(fth_step, app_state=state)
 
 # folder for results
 row_output_dir = 0
