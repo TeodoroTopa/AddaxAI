@@ -598,7 +598,7 @@ on someone else's repository.
 
 ## Phase 6 Progress Tracker
 
-**Current Status:** P0 merged to main (2026-03-22). P1 work next.
+**Current Status:** P0 merged to main (2026-03-22). Step 8 complete (2026-03-22). P1 work continues.
 
 ### P0 — Pre-merge work — COMPLETE
 
@@ -616,7 +616,7 @@ on someone else's repository.
 
 | Step | Task | Status | Date | Notes |
 |------|------|--------|------|-------|
-| 8 | JSON schema validation (6.3) | ⏳ Pending | — | Branch: `phase6/json-schemas` |
+| 8 | JSON schema validation (6.3) | ✅ Done | 2026-03-22 | PR#2 merged, branch deleted |
 | 9 | Integration test fixtures (6.5) | ⏳ Pending | — | Branch: `phase6/test-fixtures` |
 | 10 | Model adapter protocol (6.4) | ⏳ Pending | — | Branch: `phase6/model-protocol` |
 | 11 | Event bus infrastructure (6.6) | ⏳ Pending | — | Branch: `phase6/event-bus` (multi-commit) |
