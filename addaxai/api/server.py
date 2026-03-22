@@ -5,7 +5,7 @@ Start with: uvicorn addaxai.api.server:app --port 6189
 
 import json
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from fastapi import FastAPI, HTTPException
 
