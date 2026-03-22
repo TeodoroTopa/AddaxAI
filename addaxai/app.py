@@ -194,6 +194,7 @@ from addaxai.ui.dialogs.download_progress import EnvDownloadProgressWindow, Mode
 from addaxai.ui.dialogs.info_frames import ModelInfoFrame as model_info_frame, DonationPopupFrame as donation_popup_frame
 from addaxai.ui.dialogs.progress import ProgressWindow
 from addaxai.ui.dialogs.speciesnet_output import SpeciesNetOutputWindow
+from addaxai.ui.deploy_tab import DeployTab
 from addaxai.ui.advanced.help_tab import HyperlinkManager, write_help_tab
 from addaxai.ui.advanced.about_tab import write_about_tab
 from addaxai.ui.simple.simple_window import build_simple_mode
@@ -8222,6 +8223,10 @@ row_btn_start_deploy = 12
 btn_start_deploy = Button(snd_step, text=t('btn_start_deploy'), command=start_deploy)
 btn_start_deploy.grid(row=row_btn_start_deploy, column=0, columnspan=2, sticky='ew')
 state.btn_start_deploy = btn_start_deploy
+
+# Instantiate DeployTab view and register button
+deploy_view = DeployTab(snd_step, start_deploy, app_state=state)
+deploy_view.set_button_ref(btn_start_deploy)
 
 ### human-in-the-loop step
 trd_step_row = 1
