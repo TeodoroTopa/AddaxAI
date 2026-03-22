@@ -598,7 +598,7 @@ on someone else's repository.
 
 ## Phase 6 Progress Tracker
 
-**Current Status:** P0 merged to main (2026-03-22). Steps 8-12 complete (2026-03-22). P2 work continuing.
+**Current Status:** P0 merged to main (2026-03-22). Steps 8-12 complete (2026-03-22). Step 13a (GUI rename) done (2026-03-22). Step 13b-e (feature UI modules) pending.
 
 ### P0 — Pre-merge work — COMPLETE
 
@@ -626,7 +626,7 @@ on someone else's repository.
 | Step | Task | Status | Date | Notes |
 |------|------|--------|------|-------|
 | 12 | View protocols (6.6b) | ✅ Done | 2026-03-22 | PR#6 merged, branch deleted |
-| 13 | Rename & break apart GUI (6.6b) | ⏳ Pending | — | Branch: `phase6/gui-restructure` (high-risk) |
+| 13 | Rename GUI (13a) & extract modules (13b-e) (6.6b) | 🔶 In progress | 2026-03-22 | 13a done (PR#7). 13b-e pending: feature UI extraction |
 | 14 | REST API layer (6.7) | ⏳ Pending | — | Branch: `phase6/rest-api` |
 
 ---
