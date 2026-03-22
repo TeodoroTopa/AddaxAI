@@ -222,11 +222,11 @@ if platform.system() == "Windows":
     import ctypes
     try:
         # attempt
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)
-        scale_factor = ctypes.windll.shcore.GetScaleFactorForDevice(0) / 100
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # type: ignore[attr-defined]
+        scale_factor = ctypes.windll.shcore.GetScaleFactorForDevice(0) / 100  # type: ignore[attr-defined]
     except AttributeError:
         # fallback for older versions of Windows
-        ctypes.windll.user32.SetProcessDPIAware()
+        ctypes.windll.user32.SetProcessDPIAware()  # type: ignore[attr-defined]
 
 # load previous settings
 global_vars = load_global_vars(AddaxAI_files)
