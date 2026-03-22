@@ -8,9 +8,9 @@ from addaxai.core.paths import get_base_path, get_cls_dir, get_det_dir, get_env_
 
 def test_get_base_path_returns_parent_of_parent(tmp_path):
     """get_base_path should return the grandparent of the given script file."""
-    script_dir = tmp_path / "AddaxAI"
-    script_dir.mkdir()
-    script_file = script_dir / "AddaxAI_GUI.py"
+    script_dir = tmp_path / "AddaxAI" / "addaxai"
+    script_dir.mkdir(parents=True)
+    script_file = script_dir / "app.py"
     script_file.touch()
 
     result = get_base_path(str(script_file))

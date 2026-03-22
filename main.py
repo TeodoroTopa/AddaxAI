@@ -33,7 +33,7 @@ if AddaxAI_files.endswith(".app/Contents/MacOS"):
     AddaxAI_files = os.path.dirname(os.path.dirname(os.path.dirname(AddaxAI_files)))
 
 # init paths    
-GUI_script = os.path.join(AddaxAI_files, "AddaxAI", "AddaxAI_GUI.py")
+GUI_script = os.path.join(AddaxAI_files, "AddaxAI", "addaxai", "app.py")
 first_startup_file = os.path.join(AddaxAI_files, "first-startup.txt")
 
 # log
