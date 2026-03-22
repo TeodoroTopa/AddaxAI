@@ -7,6 +7,13 @@ protocol to abstract the UI from orchestration logic.
 
 from typing import Any, Dict, Optional
 
+from addaxai.core.events import event_bus
+from addaxai.core.event_types import (
+    POSTPROCESS_PROGRESS,
+    POSTPROCESS_FINISHED,
+    POSTPROCESS_ERROR,
+)
+
 
 class PostprocessTab:
     """Manages the postprocessing workflow UI.
@@ -29,6 +36,23 @@ class PostprocessTab:
         self.parent_frame = parent_frame
         self.app_state = app_state
         self._progress_label_ref: Optional[Any] = None
+
+        # Subscribe to postprocessing events
+        event_bus.on(POSTPROCESS_PROGRESS, self._on_postprocess_progress)
+        event_bus.on(POSTPROCESS_ERROR, self._on_postprocess_error)
+        event_bus.on(POSTPROCESS_FINISHED, self._on_postprocess_finished)
+
+    def _on_postprocess_progress(self, pct: float, message: str) -> None:
+        """Handle postprocessing progress event."""
+        self.show_progress(pct, message)
+
+    def _on_postprocess_error(self, message: str, **kwargs: Any) -> None:
+        """Handle postprocessing error event."""
+        self.show_error(message)
+
+    def _on_postprocess_finished(self, **kwargs: Any) -> None:
+        """Handle postprocessing finished event."""
+        self.show_completion({})
 
     def show_progress(self, pct: float, message: str) -> None:
         """Display postprocessing progress.

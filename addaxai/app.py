@@ -195,6 +195,7 @@ from addaxai.ui.dialogs.info_frames import ModelInfoFrame as model_info_frame, D
 from addaxai.ui.dialogs.progress import ProgressWindow
 from addaxai.ui.dialogs.speciesnet_output import SpeciesNetOutputWindow
 from addaxai.ui.deploy_tab import DeployTab
+from addaxai.ui.postprocess_tab import PostprocessTab
 from addaxai.ui.advanced.help_tab import HyperlinkManager, write_help_tab
 from addaxai.ui.advanced.about_tab import write_about_tab
 from addaxai.ui.simple.simple_window import build_simple_mode
@@ -8250,6 +8251,9 @@ fth_step.configure(font=(text_font, first_level_frame_font_size, "bold"))
 fth_step.grid(column=1, row=fth_step_row, sticky='nesw')
 fth_step.columnconfigure(0, weight=1, minsize=label_width)
 fth_step.columnconfigure(1, weight=1, minsize=widget_width)
+
+# Instantiate PostprocessTab view
+postprocess_view = PostprocessTab(fth_step, app_state=state)
 
 # folder for results
 row_output_dir = 0
