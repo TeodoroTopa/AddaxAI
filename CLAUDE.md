@@ -15,57 +15,95 @@ and ML frameworks — so each model runs as a subprocess, often in an isolated c
 
 ---
 
-## What Was Refactored and Why
+## Refactoring History (Phases 1–6)
 
 The application originally lived in a single ~11,200-line file (`AddaxAI_GUI.py`) with no
 separation between business logic, UI, model deployment, data processing, and localization.
-All state was managed via `global` declarations (35 of them). This made the codebase
-impossible to unit test, extremely fragile to modify, and impenetrable for new contributors.
+All state was managed via 35 `global` declarations.
 
-**Phase 1** extracted 58 pure backend functions (~1,378 lines) into 12 modules under
-`addaxai/`. Each function was parameterized (globals like `AddaxAI_files` became explicit
-arguments), then wired back into `AddaxAI_GUI.py` as drop-in replacements. The Phase 1
+**Phase 1:** Extracted 58 pure backend functions (~1,378 lines) into 12 modules under
+`addaxai/`. Each function was parameterized (globals became explicit arguments). The Phase 1
 behavioral change log in the git history documents every case where behavior changed during
-extraction (bug fixes, return type changes, stripped UI side-effects) — read it before
-touching `models/registry.py`, `models/deploy.py`, or `processing/export.py`.
+extraction — read it before touching `models/registry.py`, `models/deploy.py`, or
+`processing/export.py`.
 
-**Phase 2** replaced 662 inline `["English", "Spanish", "French"][lang_idx]` array lookups
-with a proper i18n system: a `t("key")` function backed by three JSON files
-(`addaxai/i18n/{en,es,fr}.json`, ~300 keys each). The `lang_idx` global was eliminated;
-all language state now goes through `addaxai.i18n`.
+**Phase 2:** Replaced 662 inline language array lookups with a proper i18n system: a
+`t("key")` function backed by `addaxai/i18n/{en,es,fr}.json` (~300 keys each).
 
-**Phase 3** extracted 7 widget/dialog/tab classes from the monolith into `addaxai/ui/`:
-`ProgressWindow`, `SpeciesSelectionFrame`, `InfoButton`/`CancelButton`/`GreyTopButton`,
-`TextButtonWindow`, `CustomWindow`, `ModelInfoFrame`/`DonationPopupFrame`, help tab,
-about tab, and the entire simple-mode window (`build_simple_mode()`).
+**Phase 3:** Extracted 7 widget/dialog/tab classes into `addaxai/ui/`.
 
-**Phase 4** eliminated all global state. An `AppState` dataclass (`addaxai/core/state.py`)
-now owns all 35 former globals — tkinter variables, cancel flags, deployment state, HITL
-state, dropdown option lists, widget references, and caches. The instance is created once
-after the root window is built and passed wherever needed. `SpeciesNetOutputWindow` was
-also extracted as the final dialog class.
+**Phase 4:** Eliminated all global state. An `AppState` dataclass (`addaxai/core/state.py`)
+now owns all 35 former globals.
 
-**Phase 5** added production-quality polish: full type annotations on all 39 `addaxai/`
-modules (Python 3.8 compatible, using `typing` generics throughout); a `logging`
-infrastructure (`addaxai/core/logging.py`) that writes to both stdout and
-`AddaxAI_files/addaxai.log`, replacing all `print()` calls across the entire codebase;
-and a GitHub Actions CI pipeline (`.github/workflows/test.yml`) that runs unit tests on
-Python 3.9 and 3.11, `ruff` lint, and `mypy` type checking on every push.
+**Phase 5:** Added type annotations on all modules (Python 3.8 compatible), logging
+infrastructure (`addaxai/core/logging.py`), and GitHub Actions CI pipeline.
+
+**Phase 6:** Open-source readiness. Added `pyproject.toml`, CI jobs (mypy, coverage),
+GitHub issue/PR templates, `.editorconfig`, `Makefile`, `.pre-commit-config.yaml`,
+`addaxai/py.typed`. Added JSON schemas (`addaxai/schemas/`), integration test fixtures
+(`tests/fixtures/`), `InferenceBackend` protocol (`addaxai/models/backend.py`), model
+adapter template (`classification_utils/model_types/_template/`). Added event bus
+(`addaxai/core/events.py`, `addaxai/core/event_types.py`) with dual-write wiring in
+`deploy_model()`, `classify_detections()`, and `start_postprocess()`. Added view protocols
+(`addaxai/ui/protocols.py`) and shell UI modules (`deploy_tab.py`, `postprocess_tab.py`,
+`hitl_window.py`, `results_viewer.py`). Renamed `AddaxAI_GUI.py` → `addaxai/app.py`.
+Added read-only REST API (`addaxai/api/server.py`). Fixed CI lint/typecheck for legacy
+app.py patterns via documented suppressions in `ruff.toml`.
+
+---
+
+## Current State (as of 2026-03-22)
+
+### Numbers
+
+- **53 Python modules** under `addaxai/` (13,503 lines total)
+- **`addaxai/app.py`**: 8,624 lines, 169 functions — still the monolith
+- **34 test files** under `tests/` (5,214 lines)
+- **428 tests** (420 passing, 8 GUI integration, 1 smoke, ~9 skipped for optional deps)
+- **3 CI jobs**: unit tests (Python 3.9 + 3.11 with coverage), ruff lint, mypy typecheck
+
+### What's Done
+
+- All business logic extracted into `addaxai/` modules (config, models, processing, utils, i18n, analysis)
+- All global state centralized in `AppState` dataclass
+- Full type annotations (Python 3.8 compatible)
+- Logging throughout (replaces all print() calls)
+- Event bus infrastructure (`EventBus` class + 16 standard event type constants)
+- Event bus dual-write: `deploy_model()`, `classify_detections()`, `start_postprocess()` emit events alongside old direct `progress_window.update_values()` calls
+- View protocols defined: `DeployView`, `PostprocessView`, `HITLView`, `ResultsView`
+- Shell UI modules exist (`deploy_tab.py`, `postprocess_tab.py`, `hitl_window.py`, `results_viewer.py`) but contain only event subscriptions and stub method bodies — the actual widget code is still in `app.py`
+- JSON schemas for `global_vars.json`, `model_vars.json`, recognition output
+- REST API with read-only endpoints: `GET /models`, `GET /results/{folder}`, `GET /health`
+- `InferenceBackend` protocol and model adapter template
+
+### What's NOT Done (the remaining extraction)
+
+The event bus emits events but `app.py` still directly calls `state.progress_window.update_values()`,
+`root.update()`, and `mb.showerror()` in the three orchestrators. The shell UI modules
+subscribe to events but can't act on them because no widget code has been moved into them.
+The dual-write needs to be completed: remove the old direct UI calls, make the orchestrators
+communicate exclusively through the event bus, then move the widget construction code from
+`app.py` into the feature modules. This is the Phase 7 work described below.
 
 ---
 
 ## Repository Layout
 
 ```
-AddaxAI_GUI.py              # Main entry point — still ~8,500 lines of GUI code
 addaxai/
+├── app.py                  # Main entry point — 8,624 lines of GUI + orchestration code
+├── __init__.py
+├── py.typed                # PEP 561 marker
 ├── core/
 │   ├── config.py           # load_global_vars / write_global_vars / load_model_vars_for
-│   ├── logging.py          # setup_logging() — call once in main() with log_dir=AddaxAI_files
+│   ├── event_types.py      # 16 standard event constants (DEPLOY_*, CLASSIFY_*, POSTPROCESS_*, MODEL_*)
+│   ├── events.py           # EventBus class + module-level event_bus singleton
+│   ├── logging.py          # setup_logging()
 │   ├── paths.py            # Path resolution helpers
 │   ├── platform.py         # OS detection, DPI scaling, Python interpreter lookup
-│   └── state.py            # AppState dataclass — single instance owns all mutable state
+│   └── state.py            # AppState dataclass — owns all mutable state
 ├── models/
+│   ├── backend.py          # InferenceBackend protocol (runtime_checkable)
 │   ├── deploy.py           # cancel_subprocess, switch_yolov5_version, imitate_object_detection
 │   └── registry.py         # fetch_known_models, set_up_unknown_model, environment_needs_downloading
 ├── processing/
@@ -75,44 +113,28 @@ addaxai/
 ├── analysis/
 │   └── plots.py            # fig2img, overlay_logo, calculate_time_span
 ├── i18n/
-│   ├── __init__.py         # t("key") translation function, lang_idx(), i18n_set_language()
-│   ├── en.json
-│   ├── es.json
-│   └── fr.json
+│   ├── __init__.py         # t("key"), lang_idx(), i18n_set_language()
+│   ├── en.json, es.json, fr.json
 ├── hitl/
-│   └── __init__.py         # stub — HITL data logic remains in AddaxAI_GUI.py for now
+│   └── __init__.py         # Stub — HITL data logic remains in app.py
 ├── ui/
-│   ├── widgets/
-│   │   ├── buttons.py      # InfoButton, CancelButton, GreyTopButton
-│   │   ├── frames.py       # MyMainFrame, MySubFrame, MySubSubFrame
-│   │   └── species_selection.py  # SpeciesSelectionFrame (scrollable checkbox list)
-│   ├── dialogs/
-│   │   ├── custom_window.py       # CustomWindow (generic popup)
-│   │   ├── download_progress.py   # EnvDownloadProgressWindow
-│   │   ├── info_frames.py         # ModelInfoFrame, DonationPopupFrame
-│   │   ├── patience.py            # PatienceWindow
-│   │   ├── progress.py            # ProgressWindow (deploy + postprocess progress)
-│   │   ├── speciesnet_output.py   # SpeciesNetOutputWindow
-│   │   └── text_button.py         # TextButtonWindow
-│   ├── advanced/
-│   │   ├── about_tab.py    # write_about_tab()
-│   │   └── help_tab.py     # write_help_tab(), HyperlinkManager
-│   └── simple/
-│       └── simple_window.py  # build_simple_mode() → returns dict of widget refs
+│   ├── protocols.py        # DeployView, PostprocessView, HITLView, ResultsView (runtime_checkable)
+│   ├── deploy_tab.py       # Shell — subscribes to deploy events, stub method bodies
+│   ├── postprocess_tab.py  # Shell — subscribes to postprocess events, stub method bodies
+│   ├── hitl_window.py      # Shell — stub method bodies only
+│   ├── results_viewer.py   # Shell — stub method bodies only
+│   ├── widgets/            # InfoButton, CancelButton, GreyTopButton, frames, SpeciesSelectionFrame
+│   ├── dialogs/            # ProgressWindow, CustomWindow, PatienceWindow, etc. (1,345 lines total)
+│   ├── advanced/           # help_tab.py, about_tab.py
+│   └── simple/             # simple_window.py (build_simple_mode)
+├── schemas/
+│   ├── validate.py         # Manual validation (no jsonschema dependency)
+│   ├── global_vars.schema.json, model_vars.schema.json, recognition_output.schema.json
+├── api/
+│   └── server.py           # FastAPI: GET /models, /results/{folder}, /health
 └── utils/
-    ├── files.py            # is_valid_float, get_size, shorten_path, natural_sort_key,
-    │                       #   remove_ansi_escape_sequences, sort_checkpoint_files
-    ├── images.py           # is_image_corrupted, get_image_timestamp, find_series_images, blur_box
-    └── json_ops.py         # merge_jsons, append_to_json, get_hitl_var_in_json, etc.
+    ├── files.py, images.py, json_ops.py
 ```
-
-**Why `AddaxAI_GUI.py` is still ~8,500 lines:** Everything that remains is tightly coupled
-to tkinter widget construction and event wiring. The extractable surface is exhausted. The
-deployment orchestrators (`start_deploy`, `deploy_model`, `classify_detections`) coordinate
-subprocess spawning, progress updates, messagebox calls, and cancel handling in a way that
-cannot be cleanly separated without introducing a callback/event bus first. The HITL window
-(`open_hitl_settings_window`) is ~400 lines of widget construction alone. This line count
-is normal for a ~40-dialog, 3-language desktop app with no UI framework abstraction layer.
 
 ---
 
@@ -122,35 +144,32 @@ is normal for a ~40-dialog, 3-language desktop app with no UI framework abstract
 # Clone the fork
 git clone https://github.com/TeodoroTopa/AddaxAI.git
 cd AddaxAI
-git checkout refactor/modularize
 
-# Unit test environment (Python 3.14, no GUI deps needed)
+# Unit test environment (Python 3.9+, no GUI deps needed)
 python -m venv .venv
-.venv/Scripts/pip install pytest numpy pandas requests Pillow ruff mypy
+.venv/Scripts/pip install -e ".[test]"
 
 # Run unit tests
-.venv/Scripts/python -m pytest tests/ -v \
-  --ignore=tests/test_gui_smoke.py \
-  --ignore=tests/test_gui_integration.py
+make test
 
 # Run linter
-.venv/Scripts/ruff check addaxai/
+make lint
 
 # Run type checker
-.venv/Scripts/mypy addaxai/ --ignore-missing-imports --no-strict-optional
+make typecheck
 
 # GUI environment (Python 3.8, full deps including MegaDetector)
 # This is the installed app's conda env — do not modify it
 C:\Users\Topam\AddaxAI_files\envs\env-base\python.exe
 
 # Launch the GUI for manual testing
-C:\Users\Topam\AddaxAI_files\envs\env-base\python.exe dev_launch.py
+make dev
 
 # Run GUI integration tests (boots real GUI, ~15s per test)
-C:\Users\Topam\AddaxAI_files\envs\env-base\python.exe -m pytest tests/test_gui_integration.py -v
+make test-gui
 
 # Run GUI smoke test (starts GUI, waits 10s, asserts no crash)
-C:\Users\Topam\AddaxAI_files\envs\env-base\python.exe -m pytest tests/test_gui_smoke.py -v
+make test-smoke
 ```
 
 **Remotes:**
@@ -159,54 +178,15 @@ C:\Users\Topam\AddaxAI_files\envs\env-base\python.exe -m pytest tests/test_gui_s
 
 ---
 
-## Test Suite
-
-Tests are split by runtime because the GUI requires a specific conda env that is not
-available in CI.
-
-**Unit tests** (`tests/test_*.py`, excluding GUI tests): Run with `.venv` Python 3.14.
-Fast (~12s). Import `addaxai/` modules directly. No tkinter, no conda, no models.
-**Current count: 409 passing, 9 skipped** (optional deps: cv2, matplotlib, customtkinter).
-
-**GUI integration tests** (`tests/test_gui_integration.py`): Run with env-base Python 3.8.
-The `tests/gui_test_runner.py` harness `exec()`s `AddaxAI_GUI.py` with a patched
-`AddaxAI_files` path, suppresses `main()`, initializes frame states manually, then
-schedules each test via `root.after()`. The test writes results to a temp JSON file and
-calls `root.quit()`. The pytest file reads that JSON and asserts. **Current count: 8 passing.**
-
-| Test | What it covers |
-|------|----------------|
-| `test_language_cycling` | EN→ES→FR→EN, checks 12 advanced + 5 simple widget texts per language |
-| `test_mode_switching` | Advanced↔simple toggle, window visibility |
-| `test_folder_selection` | `update_frame_states()` on folder change |
-| `test_model_dropdown_population` | `update_model_dropdowns()` populates `state.dpd_options_*` |
-| `test_toggle_frames` | sep/vis postprocessing frame toggle callbacks |
-| `test_reset_values` | `reset_values()` reverts 5 vars to defaults |
-| `test_deploy_validation` | `start_deploy()` shows error on empty folder (doesn't crash) |
-| `test_state_attributes` | 24 AppState attributes have correct types/defaults after boot |
-
-**GUI smoke test** (`tests/test_gui_smoke.py`): Launches GUI as subprocess, waits 10s,
-asserts process is still alive. **1 passing.**
-
-**What is NOT tested:** The actual MegaDetector/classification subprocess pipeline, HITL
-workflow, postprocessing file moves, results viewer, export to XLSX, and SpeciesNet
-deployment. These require real models and are too slow for automated CI. See the "Future
-Work" section for how to address this.
-
-**CI** (`.github/workflows/test.yml`): Runs on every push to `refactor/modularize` and
-PRs to `main`. Three jobs: unit tests (Python 3.9 + 3.11), ruff lint, mypy type check.
-GUI/integration/smoke tests are excluded — they require env-base and a display.
-
----
-
 ## Development Conventions
 
 - **TDD:** Write tests first, implement to make them pass, run full suite, commit.
 - **One commit per logical step** — small, immediately pushable. Conventional commit
   prefixes: `feat`, `fix`, `refactor`, `ci`, `docs`, `chore`.
-- **Extraction rule:** When moving a function out of `AddaxAI_GUI.py`, parameterize all
-  globals (e.g. `AddaxAI_files` → `base_path`, `var_choose_folder.get()` → `base_folder`).
-  Do not change behavior — pure mechanical moves only. Document exceptions in the commit message.
+- **Extraction rule:** When moving code out of `app.py`, parameterize all globals
+  (e.g. `AddaxAI_files` → `base_path`, `var_choose_folder.get()` → `base_folder`).
+  Do not change behavior — pure mechanical moves only. Document exceptions in the
+  commit message.
 - **Type hints:** Use `typing` module generics throughout for Python 3.8 compatibility
   (`List`, `Dict`, `Optional`, not `list[str]`, `dict[str, Any]`, `X | None`).
   Use `Any` for all tkinter/customtkinter widget parameters.
@@ -219,1383 +199,720 @@ GUI/integration/smoke tests are excluded — they require env-base and a display
 
 ---
 
+## Git Workflow
+
+This repo is a fork. There are two remotes:
+- `origin` → `TeodoroTopa/AddaxAI` (YOUR FORK — push here, open PRs here)
+- `upstream` → `PetervanLunteren/AddaxAI` (ORIGINAL — never push here, never open PRs here)
+
+For each feature branch:
+```bash
+git checkout main && git pull origin main
+git checkout -b phase7/<branch-name>
+# ... do the work, make commits ...
+git push -u origin phase7/<branch-name>
+gh pr create --repo TeodoroTopa/AddaxAI --base main --title "..." --body "..."
+# Wait for CI, then:
+gh pr merge <PR_NUMBER> --repo TeodoroTopa/AddaxAI --merge --delete-branch
+git checkout main && git pull origin main
+```
+
+**NEVER run `gh pr create` without `--repo TeodoroTopa/AddaxAI`.** Without it, `gh`
+defaults to the upstream repo, which creates unwanted PRs on someone else's repository.
+
+---
+
+## Test Suite
+
+Tests are split by runtime because the GUI requires a specific conda env not available in CI.
+
+**Unit tests** (`tests/test_*.py`, excluding GUI tests): Run with `.venv` Python 3.9+.
+Fast (~12s). Import `addaxai/` modules directly. No tkinter, no conda, no models.
+Current count: ~420 passing, ~9 skipped (optional deps: cv2, matplotlib, customtkinter).
+
+**GUI integration tests** (`tests/test_gui_integration.py`): Run with env-base Python 3.8.
+The `tests/gui_test_runner.py` harness `exec()`s `addaxai/app.py` with a patched
+`AddaxAI_files` path, suppresses `main()`, initializes frame states manually, then
+schedules each test via `root.after()`. 8 tests covering language cycling, mode switching,
+folder selection, model dropdowns, frame toggles, reset, deploy validation, state attributes.
+
+**GUI smoke test** (`tests/test_gui_smoke.py`): Launches GUI as subprocess, waits 10s,
+asserts process is still alive. 1 test.
+
+**CI** (`.github/workflows/test.yml`): Runs on pushes to `main` and PRs to `main`.
+Three jobs: unit tests (Python 3.9 + 3.11 with coverage → Codecov), ruff lint, mypy.
+
+---
+
 ## Watchouts and Known Issues
 
-**Python version split:** Unit tests run on Python 3.14 (`.venv`). The GUI runs on Python
+**Python version split:** Unit tests run on Python 3.9+ (`.venv`). The GUI runs on Python
 3.8 (`env-base`). All `addaxai/` code must be Python 3.8 compatible — use `typing` generics,
-not built-in generic syntax. `mypy` is configured with `--ignore-missing-imports` and
-`--no-strict-optional`; tightening these will reveal real issues.
+not built-in generic syntax.
 
-**Phase 1 behavioral changes:** Several functions behave differently from the original:
-- `utils/files.py`: `sort_checkpoint_files` uses index `[2]` not `[1]` (bug fix — original would sort incorrectly).
-- `utils/json_ops.py`: `get_hitl_var_in_json` returns `"never-started"` gracefully instead of crashing when no metadata key exists.
-- `processing/export.py`: `csv_to_coco` uses `math.isnan()` instead of `type(val) == float` (bug fix — original treated any float as NA date).
-- `models/deploy.py`: `cancel_subprocess` no longer re-enables UI buttons or closes the progress window — the caller in `AddaxAI_GUI.py` handles that.
-- `models/registry.py`: `environment_needs_downloading` returns a `tuple` not a `list`. `set_up_unknown_model` silently swallows download errors — should be improved.
+**app.py lint/typecheck suppressions:** `app.py` is a legacy monolith predating the
+linting setup. Rather than fixing all legacy patterns in place, they are suppressed with
+documentation. See `ruff.toml` per-file-ignores (10 codes) and ~29 `# type: ignore`
+comments in `app.py`. These suppressions will shrink as code is extracted into modules.
 
-**Flaky test:** `test_non_tk_attr_instantiated` occasionally skips depending on Tk
-availability in the test environment. The count fluctuates between 325/9 and 326/8 skipped.
-This is pre-existing, not introduced by the refactoring.
+**Phase 1 behavioral changes:** Several extracted functions behave differently from the
+original. Key differences documented in git history:
+- `sort_checkpoint_files` uses index `[2]` not `[1]` (bug fix)
+- `get_hitl_var_in_json` returns `"never-started"` gracefully instead of crashing
+- `csv_to_coco` uses `math.isnan()` instead of `type(val) == float` (bug fix)
+- `cancel_subprocess` no longer re-enables UI buttons (caller handles that)
+- `environment_needs_downloading` returns tuple not list
 
 **customtkinter import pattern:** All UI modules use a try/except fallback pattern so they
-can be imported without customtkinter installed (enabling unit tests). This causes `mypy`
-`no-redef` and `valid-type`/`misc` errors on the stub class definitions and subclasses —
-suppressed with `# type: ignore` comments. Do not remove these.
-
-**`HITL` and `analysis` modules are stubs:** `addaxai/hitl/__init__.py` is nearly empty;
-the HITL data logic remains in `AddaxAI_GUI.py`. `addaxai/analysis/` has only `plots.py`;
-maps.py was planned but not needed.
+can be imported without customtkinter installed (enabling unit tests). This causes mypy
+errors suppressed with `# type: ignore` comments. Do not remove these.
 
 **Model adapters:** `classification_utils/model_types/` is untouched. Each adapter runs
-as a subprocess in its own conda env with a different ML framework. The boilerplate
-duplication is intentional for subprocess isolation — don't consolidate it.
+as a subprocess in its own conda env. The boilerplate duplication is intentional for
+subprocess isolation — don't consolidate it.
+
+---
+
+## app.py TODO Comments (lines 8–54)
+
+The original developer left 47 TODO comments at the top of `app.py`. These are feature
+requests, bugs, and polish items accumulated over years. Key items:
+
+- **BUG:** Windows file-in-use error when moving files during postprocessing + XLSX export
+- **CLEAN:** Handle deleted images during processing (skip file, continue)
+- **RESUME DOWNLOAD:** Atomic downloads — download to temp, move on success
+- **ANNOTATION:** 15 sub-items for HITL/LabelImg workflow improvements
+- **MERGE JSON:** Combine image and video JSONs (already works for timelapse)
+- **JSON confidence tracking:** Keep confidence scores through the full pipeline
+- **LAT LON 0,0:** Filter out 0,0 GPS coordinates from map creation
+- **CSV/XLSX:** Add frame number, frame rate columns
+
+Most of these become easier to address after the feature extraction in Phase 7. The
+Windows file-in-use bug is the only production blocker.
+
+---
+
+## Phase 7 — Implementation Plans
+
+Phase 7 has three tracks. Track A (event bus migration) is the critical path — it
+unblocks feature extraction, headless deployment, and future cloud inference. Track C
+(testing) is independent and can run in parallel. Track B (bug fixes) is deferred until
+after Track A delivers the main architectural win.
+
+### Track A: Event Bus Migration & Feature Extraction
+
+See "Phase 7 Track A — Event Bus Migration" section below for detailed step-by-step
+implementation instructions.
+
+### Track B: Bug Fixes & Quick Wins (Deferred)
+
+After Track A is complete, address these contained issues:
+
+1. **Windows file-in-use bug** — Investigate `shutil.move` and file handle leaks in
+   postprocessing. Likely involves `openpyxl`/`pandas` not closing file handles. Look
+   at the `postprocess()` function and its callers. Fix with explicit `close()` or
+   context managers.
+
+2. **LAT LON 0,0 filter** — In the map creation code (search for `folium` or `HeatMap`
+   usage in `app.py`), skip coordinates at exactly (0.0, 0.0) before plotting.
+
+3. **Completion messagebox** — At the end of `deploy_model()` (near line 3127), add a
+   summary messagebox showing: images processed, detections found, errors/warnings count.
+   Use `mb.showinfo()` with a formatted message.
+
+These are all small, contained fixes that don't require architectural changes.
+
+### Track C: Testing Infrastructure
+
+See "Phase 7 Track C — Testing Infrastructure" section below for detailed step-by-step
+implementation instructions.
+
+---
+
+## Phase 7 Track A — Event Bus Migration
+
+### Goal
+
+Complete the event bus migration so that the three orchestrators (`deploy_model()`,
+`classify_detections()`, `start_postprocess()`) communicate with the UI exclusively
+through the event bus. Then move the actual widget code from `app.py` into the shell
+UI modules. Target: reduce `app.py` from 8,624 lines to ~5,000 lines.
+
+### Prerequisites
+
+- Event bus (`addaxai/core/events.py`) — DONE
+- Event type constants (`addaxai/core/event_types.py`) — DONE
+- Dual-write emit calls in all three orchestrators — DONE
+- View protocols (`addaxai/ui/protocols.py`) — DONE
+- Shell UI modules (deploy_tab, postprocess_tab, hitl_window, results_viewer) — DONE
+
+### Important Context
+
+The three orchestrators currently do two things at each progress point:
+1. **Emit an event** (new): `event_bus.emit(DEPLOY_PROGRESS, pct=50.0, message="...")`
+2. **Directly update the UI** (old): `state.progress_window.update_values(process=..., status=...)`
+
+Both happen. The goal is to remove #2 and have the UI modules respond to #1 instead.
+
+The `ProgressWindow` class (`addaxai/ui/dialogs/progress.py`, 762 lines) is the primary
+UI component that receives these direct calls. It has an `update_values()` method that
+takes `process` and `status` parameters and updates labels, progress bars, and button
+states.
+
+The three orchestrators also call `mb.showerror()`, `mb.showinfo()`, and `mb.askyesno()`
+for user-facing messages. These messagebox calls are tightly coupled to the GUI. For
+Phase 7 Track A, leave messagebox calls in place — they are a separate concern that can
+be addressed later.
+
+### Branch Setup
+
+```bash
+git checkout main && git pull origin main
+git checkout -b phase7/event-bus-migration
+```
+
+### Step A1: Make deploy_tab.py respond to events by updating ProgressWindow
+
+**What to do:** The `DeployTab` class already subscribes to `DEPLOY_PROGRESS`,
+`DEPLOY_ERROR`, and `DEPLOY_FINISHED` events. Currently its handler methods
+(`_on_deploy_progress`, etc.) call stub `show_progress()`/`show_error()` methods
+that do nothing useful. Wire them to actually call `state.progress_window.update_values()`.
+
+**Files to modify:**
+- `addaxai/ui/deploy_tab.py`
+
+**Detailed instructions:**
+
+1. Read `addaxai/ui/dialogs/progress.py` to understand the `update_values()` method
+   signature. It takes `process` (string like `"img_det"`, `"vid_det"`) and `status`
+   (string like `"load"`, `"done"`, or a percentage string).
+
+2. Read `addaxai/app.py` lines 2840-3140 (`deploy_model()`) and note every
+   `state.progress_window.update_values()` call. Record the exact `process` and
+   `status` arguments used.
+
+3. Add `data_type` as a parameter to `DeployTab.__init__()` (or accept it via a setter
+   method), since the `process` argument to `update_values()` depends on whether we're
+   processing images or videos (`"img_det"` vs `"vid_det"`).
+
+4. Update `_on_deploy_progress()` to call
+   `state.progress_window.update_values(process=..., status=...)` with the correct
+   arguments, translating from the event's `pct`/`message` kwargs to the
+   `update_values()` format.
+
+5. Update `_on_deploy_finished()` to call
+   `state.progress_window.update_values(process=..., status="done")`.
+
+6. Do NOT remove any code from `app.py` yet. This step only makes the UI module
+   capable of responding to events. The old direct calls in `app.py` will still fire
+   too (harmless duplication).
+
+**Tests:** Run `make test` — all existing tests must pass. No new tests needed for
+this step (it's a wiring change, not new logic).
+
+**Commit:** `feat: wire deploy_tab event handlers to ProgressWindow`
+
+### Step A2: Make postprocess_tab.py respond to events
+
+**What to do:** Same pattern as A1, but for `PostprocessTab`. Read `start_postprocess()`
+(lines 1220-1365) and the `postprocess()` function (lines 247-843) to understand all
+`state.progress_window.update_values()` calls during postprocessing.
+
+**Files to modify:**
+- `addaxai/ui/postprocess_tab.py`
+
+**Detailed instructions:**
+
+1. Read `app.py` lines 247-843 (`postprocess()`) and lines 1220-1365
+   (`start_postprocess()`). Note every `progress_window.update_values()` call with
+   its `process` and `status` arguments.
+
+2. The postprocessing progress calls use process strings like `"img_pst"` or `"vid_pst"`.
+
+3. Add event handler methods that call `state.progress_window.update_values()` with the
+   correct arguments, similar to step A1.
+
+4. The `POSTPROCESS_PROGRESS` event is NOT currently emitted from inside the
+   `postprocess()` function (lines 247-843) — only `POSTPROCESS_STARTED`,
+   `POSTPROCESS_FINISHED`, and `POSTPROCESS_ERROR` are emitted from `start_postprocess()`.
+   If per-step progress events are needed, add `event_bus.emit(POSTPROCESS_PROGRESS, ...)`
+   calls inside `postprocess()` at each point where `progress_window.update_values()` is
+   called. This is still dual-write — adding emit calls alongside existing direct calls.
+
+5. Do NOT remove any code from `app.py` yet.
+
+**Tests:** `make test` — all pass.
+
+**Commit:** `feat: wire postprocess_tab event handlers to ProgressWindow`
+
+### Step A3: Make classify events work through the event handlers
+
+**What to do:** The classification flow uses `classify_detections()` (lines 2601-2806).
+Wire the classify event handlers similarly.
+
+**Files to modify:**
+- `addaxai/ui/deploy_tab.py` (classification events are part of the deploy workflow —
+  classification runs after detection within the same deployment pipeline)
+
+**Detailed instructions:**
+
+1. Read `classify_detections()` (lines 2601-2806). Note all
+   `state.progress_window.update_values()` calls. The process string is
+   `"img_cls"` or `"vid_cls"`.
+
+2. `DeployTab` should also subscribe to `CLASSIFY_PROGRESS`, `CLASSIFY_FINISHED`,
+   and `CLASSIFY_ERROR` events, since classification is part of the deploy flow.
+   Add these subscriptions in `DeployTab.__init__()`.
+
+3. Add corresponding handler methods that translate the event kwargs into
+   `progress_window.update_values()` calls.
+
+4. Add `event_bus.emit(CLASSIFY_PROGRESS, ...)` calls at each progress point inside
+   `classify_detections()` where they don't already exist (check existing emit calls
+   on lines 2727, 2786, 2796). Dual-write — keep the old direct calls.
+
+5. Do NOT remove any code from `app.py` yet.
+
+**Tests:** `make test` — all pass.
+
+**Commit:** `feat: wire classify event handlers to deploy_tab`
+
+### Step A4: Remove dual-write from deploy_model()
+
+**What to do:** Now that the UI modules respond to events, remove the old direct
+`state.progress_window.update_values()` calls from `deploy_model()`.
+
+**Files to modify:**
+- `addaxai/app.py` (the `deploy_model()` function, lines ~2809-3140)
+
+**Detailed instructions:**
+
+1. In `deploy_model()`, find every `state.progress_window.update_values()` call.
+   There are approximately 6 calls (lines 2843, 3051, 3057, 3086, 3100, and a few
+   others in that range).
+
+2. For each call, verify that there is a corresponding `event_bus.emit()` call nearby
+   that provides equivalent information. If any emit call is missing, add it.
+
+3. Remove the `state.progress_window.update_values()` calls. Leave the
+   `event_bus.emit()` calls in place.
+
+4. Also remove any `root.update()` calls that were only needed to force the progress
+   window to redraw — the event handler in `deploy_tab.py` should handle this.
+
+5. Do NOT remove messagebox calls (`mb.showerror()`, `mb.askyesno()`, etc.) — those
+   stay for now.
+
+6. Do NOT remove `state.progress_window.close()` calls — those stay for now.
+
+**Tests:**
+- `make test` — all unit tests pass
+- Run the GUI smoke test: `make test-smoke` — GUI still boots without crash
+- If possible, run GUI integration tests: `make test-gui` — all 8 pass
+
+**Commit:** `refactor: remove direct progress_window calls from deploy_model (event bus only)`
+
+### Step A5: Remove dual-write from classify_detections()
+
+**What to do:** Same pattern as A4 but for `classify_detections()`.
+
+**Files to modify:**
+- `addaxai/app.py` (the `classify_detections()` function, lines ~2601-2806)
+
+**Detailed instructions:**
+
+1. Find every `state.progress_window.update_values()` call in `classify_detections()`.
+   There are approximately 3 calls (lines 2609, 2777, 2790).
+
+2. Verify corresponding emit calls exist. Add any missing ones.
+
+3. Remove the direct `progress_window.update_values()` calls.
+
+4. Keep `state.progress_window.close()` (line 2806).
+
+5. Keep all messagebox calls.
+
+**Tests:** Same as A4.
+
+**Commit:** `refactor: remove direct progress_window calls from classify_detections (event bus only)`
+
+### Step A6: Remove dual-write from start_postprocess() and postprocess()
+
+**What to do:** Same pattern for the postprocessing orchestrator.
+
+**Files to modify:**
+- `addaxai/app.py` (the `start_postprocess()` function and the `postprocess()` function)
+
+**Detailed instructions:**
+
+1. Find every `state.progress_window.update_values()` call in `start_postprocess()`
+   (lines 1220-1365) and `postprocess()` (lines 247-843). There are approximately
+   7 calls across both functions.
+
+2. For `postprocess()`, which has per-step progress calls but may not have corresponding
+   emit calls yet (since step A2 may have added them), verify all emit calls are in place.
+
+3. Remove the direct `progress_window.update_values()` calls.
+
+4. Keep `state.progress_window.close()` calls (lines 1348, 1363).
+
+5. Keep all messagebox calls.
+
+**Tests:** Same as A4.
+
+**Commit:** `refactor: remove direct progress_window calls from postprocessing (event bus only)`
+
+### Step A7: Add event bus tests for orchestrator event sequences
+
+**What to do:** Write tests that verify the orchestrators emit the correct events in the
+correct order. These tests subscribe to the event bus, call the orchestrator (with mocked
+subprocess and UI), and assert the event sequence.
+
+**Files to create:**
+- `tests/test_orchestrator_events.py`
+
+**Detailed instructions:**
+
+1. Create `tests/test_orchestrator_events.py`.
+
+2. These tests do NOT need a real GUI or real models. They test that the event bus
+   receives the right events. The challenge is that the orchestrators (`deploy_model`,
+   `classify_detections`, `start_postprocess`) reference many globals and GUI widgets
+   from `app.py`. You have two options:
+
+   a. **Test at the event bus level only:** Subscribe to events, manually emit them
+      in the order the orchestrator would, and verify handlers receive them. This
+      tests the event bus wiring without needing the orchestrators themselves.
+
+   b. **Mock the orchestrator dependencies:** If feasible, import the orchestrator
+      function, mock `state`, `root`, `mb`, `subprocess`, etc., and call it. This
+      is harder because the orchestrators use many module-level variables from `app.py`.
+
+   Option (a) is recommended for this step. Option (b) is Track C work.
+
+3. Test cases:
+   - Subscribe to DEPLOY_STARTED, DEPLOY_PROGRESS, DEPLOY_FINISHED. Emit them in
+     order. Verify all callbacks fired with correct kwargs.
+   - Subscribe to DEPLOY_ERROR. Emit it. Verify the error message is received.
+   - Subscribe to CLASSIFY_STARTED, CLASSIFY_PROGRESS, CLASSIFY_FINISHED. Same pattern.
+   - Subscribe to POSTPROCESS_STARTED, POSTPROCESS_PROGRESS, POSTPROCESS_FINISHED. Same.
+   - Test that emitting DEPLOY_PROGRESS with pct and message kwargs arrives correctly.
+   - Test that the event bus `clear_all()` in setUp/tearDown prevents cross-test leakage.
+
+4. Target: 10-15 tests.
+
+**Tests:** `make test` — all pass including the new tests.
+
+**Commit:** `test: add event sequence tests for orchestrator event flows`
+
+### Step A8: Push, PR, merge
+
+```bash
+git push -u origin phase7/event-bus-migration
+gh pr create --repo TeodoroTopa/AddaxAI --base main \
+  --title "refactor: complete event bus migration — remove dual-write" \
+  --body "$(cat <<'EOF'
+## Summary
+- Wire deploy_tab and postprocess_tab event handlers to ProgressWindow
+- Add classify event subscriptions to deploy_tab
+- Remove all direct progress_window.update_values() calls from deploy_model(),
+  classify_detections(), and start_postprocess()/postprocess()
+- Orchestrators now communicate with UI exclusively through event bus
+- Add event sequence tests
+
+## Test plan
+- [ ] All unit tests pass (make test)
+- [ ] GUI smoke test passes (make test-smoke)
+- [ ] GUI integration tests pass (make test-gui)
+- [ ] Manual test: run detection on a folder, verify progress displays correctly
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
+)"
+# Wait for CI, then:
+gh pr merge <PR_NUMBER> --repo TeodoroTopa/AddaxAI --merge --delete-branch
+git checkout main && git pull origin main
+```
+
+### Step A9 (Future — after A8 is merged): Extract widget code from app.py
+
+This is the big payoff. After the orchestrators use only the event bus, the widget
+construction code for each feature area can be moved out of `app.py` into the shell
+UI modules. This is Phase 7b work — plan it after A8 is stable.
+
+High-level approach:
+1. Identify all widget construction code in `app.py` related to the deployment tab
+   (buttons, labels, frames, grid layout). Move it into `deploy_tab.py`.
+2. Repeat for postprocessing, HITL, results viewer.
+3. Each extraction is a separate commit with its own smoke test run.
+4. Target: `app.py` shrinks from ~8,600 to ~5,000 lines.
+
+---
+
+## Phase 7 Track C — Testing Infrastructure
+
+### Goal
+
+Add subprocess-boundary tests that verify the orchestration logic without needing real
+models or a GUI. These tests mock `subprocess.Popen` at the boundary, feed canned stdout,
+and assert that the orchestration logic produces correct events and JSON output.
+
+### Prerequisites
+
+- Event bus migration (Track A steps A1-A6) should be complete, so tests can subscribe
+  to events instead of needing to inspect GUI widget state.
+- If Track A is not yet complete, the tests in this track can still be written to test
+  event emissions directly (option a from step A7).
+
+### Branch Setup
+
+```bash
+git checkout main && git pull origin main
+git checkout -b phase7/orchestration-tests
+```
+
+### Step C1: Create a test helper for mocking orchestrator dependencies
+
+**What to do:** Create a conftest fixture that provides a minimal mock environment for
+testing orchestrator functions without a GUI.
+
+**Files to create:**
+- `tests/conftest.py` (or add to existing if it exists)
+
+**Detailed instructions:**
+
+1. Check if `tests/conftest.py` exists. If so, add to it; if not, create it.
+
+2. Create a pytest fixture called `mock_app_env` that:
+   - Creates a temporary directory structure mimicking `AddaxAI_files/` (with
+     `models/det/`, `models/cls/`, and a test folder with fixture images)
+   - Copies the fixture images from `tests/fixtures/images/` into the temp folder
+   - Creates a minimal `global_vars.json` using the valid fixture from
+     `tests/fixtures/global_vars_valid.json`
+   - Returns a dict with paths: `{"base_path": ..., "image_folder": ..., "json_path": ...}`
+
+3. Create a pytest fixture called `event_collector` that:
+   - Subscribes to ALL event types from `addaxai/core/event_types.py`
+   - Collects emitted events into a list of `(event_name, kwargs)` tuples
+   - Calls `event_bus.clear_all()` in teardown to prevent cross-test leakage
+   - Returns the list so tests can assert on it
+
+   Example implementation:
+   ```python
+   @pytest.fixture
+   def event_collector():
+       from addaxai.core.events import event_bus
+       from addaxai.core import event_types
+       collected = []
+
+       def make_handler(name):
+           def handler(**kwargs):
+               collected.append((name, kwargs))
+           return handler
+
+       handlers = {}
+       for attr in dir(event_types):
+           val = getattr(event_types, attr)
+           if isinstance(val, str) and "." in val:
+               h = make_handler(val)
+               handlers[val] = h
+               event_bus.on(val, h)
+
+       yield collected
+
+       for event_name, handler in handlers.items():
+           event_bus.off(event_name, handler)
+       event_bus.clear_all()
+   ```
+
+**Tests:** `make test` — all existing tests still pass.
+
+**Commit:** `test: add conftest fixtures for orchestrator testing (mock_app_env, event_collector)`
+
+### Step C2: Test event bus integration with UI modules
+
+**What to do:** Write tests that verify the shell UI modules correctly receive events
+and call the right methods.
+
+**Files to create:**
+- `tests/test_ui_event_integration.py`
+
+**Detailed instructions:**
+
+1. Test that `DeployTab` receives `DEPLOY_PROGRESS` events:
+   - Create a `DeployTab` with a mock `parent_frame` and mock `start_deploy_callback`
+   - Emit `DEPLOY_PROGRESS` event with `pct=50.0, message="Processing 5/10"`
+   - Verify `show_progress()` was called (mock it or check side effects)
+
+2. Test that `DeployTab` receives `DEPLOY_ERROR` events:
+   - Emit `DEPLOY_ERROR` with `message="Something failed"`
+   - Verify `show_error()` was called
+
+3. Test that `DeployTab` receives `DEPLOY_FINISHED` events:
+   - Emit `DEPLOY_FINISHED` with `results_path="/some/path.json"`
+   - Verify `show_completion()` was called
+
+4. Repeat for `PostprocessTab` with `POSTPROCESS_*` events.
+
+5. Test that after `event_bus.clear_all()`, no events are received.
+
+6. Test that creating two `DeployTab` instances doesn't cause duplicate handling.
+
+7. Target: 10-12 tests.
+
+**Important:** Each test must call `event_bus.clear_all()` in teardown (or use the
+`event_collector` fixture) to prevent cross-test state leakage.
+
+**Tests:** `make test` — all pass.
+
+**Commit:** `test: add UI event integration tests for deploy_tab and postprocess_tab`
+
+### Step C3: Test subprocess stdout parsing (deploy_model simulation)
+
+**What to do:** Write tests that simulate MegaDetector subprocess stdout and verify
+the orchestration logic parses it correctly. This is the closest thing to an E2E test
+without needing real models.
+
+**Files to create:**
+- `tests/test_deploy_subprocess.py`
+
+**Detailed instructions:**
+
+1. Read `deploy_model()` in `app.py` (lines 2809-3140). Find where it reads subprocess
+   stdout. The key pattern is:
+   ```python
+   for line in process.stdout:
+       # parse progress percentage from line
+       # update progress
+   ```
+
+2. Create a mock subprocess that yields canned stdout lines matching MegaDetector's
+   output format. MegaDetector typically prints lines like:
+   ```
+   Processing image 1/10...
+   Processing image 2/10...
+   ```
+   Read the actual parsing logic in `deploy_model()` to determine the exact format.
+
+3. Write tests that:
+   - Mock `subprocess.Popen` to return canned stdout
+   - Verify that progress events are emitted with correct percentages
+   - Verify that the final JSON file is referenced in the DEPLOY_FINISHED event
+   - Verify that a subprocess error (non-zero return code) triggers DEPLOY_ERROR
+
+4. **Important challenge:** `deploy_model()` references many module-level variables from
+   `app.py` (like `var_cls_model`, `root`, `state`, etc.). To test it in isolation, you
+   would need to either:
+   a. Mock all these dependencies (fragile, many mocks needed)
+   b. Extract just the subprocess-parsing loop into a helper function in
+      `addaxai/models/deploy.py` and test that helper
+
+   **Option (b) is strongly recommended.** Extract a function like:
+   ```python
+   def parse_deploy_stdout(stdout_lines, emit_progress):
+       """Parse MegaDetector subprocess stdout and emit progress events."""
+       for line in stdout_lines:
+           # ... parsing logic ...
+           emit_progress(pct=percentage, message=msg)
+   ```
+   This function is pure logic with no GUI deps, easy to test. The caller in `app.py`
+   passes `event_bus.emit` as the `emit_progress` callback.
+
+5. If you go with option (b), also extract `parse_classify_stdout()` for the
+   classification subprocess.
+
+6. Target: 8-12 tests.
+
+**Tests:** `make test` — all pass.
+
+**Commit:** `feat: extract subprocess stdout parsers + add deploy subprocess tests`
+
+### Step C4: Test postprocess pipeline end-to-end (no GUI)
+
+**What to do:** Extend the existing `test_postprocess_pipeline.py` with tests that
+exercise the full postprocess flow using the event bus.
+
+**Files to modify:**
+- `tests/test_postprocess_pipeline.py`
+
+**Detailed instructions:**
+
+1. Read the existing tests in `test_postprocess_pipeline.py` to understand what's
+   already covered.
+
+2. Add tests that:
+   - Use the `event_collector` fixture from C1
+   - Call `move_files()` with the golden output JSON and fixture images
+   - Verify that files are moved to correct subdirectories
+   - Verify the file counts are correct
+   - Test edge cases: missing images, empty detection list, corrupt JSON
+
+3. If the `postprocess()` function in `app.py` is too coupled to the GUI to call
+   directly, test `move_files()` from `addaxai/processing/postprocess.py` instead
+   (which is already extracted and parameterized).
+
+4. Target: 5-8 additional tests.
+
+**Tests:** `make test` — all pass.
+
+**Commit:** `test: extend postprocess pipeline tests with event bus integration`
+
+### Step C5: Push, PR, merge
+
+```bash
+git push -u origin phase7/orchestration-tests
+gh pr create --repo TeodoroTopa/AddaxAI --base main \
+  --title "test: add orchestration and subprocess testing infrastructure" \
+  --body "$(cat <<'EOF'
+## Summary
+- Add conftest fixtures (mock_app_env, event_collector)
+- Add UI event integration tests for deploy_tab and postprocess_tab
+- Extract subprocess stdout parsers into testable functions
+- Add deploy subprocess simulation tests
+- Extend postprocess pipeline tests with event bus
+
+## Test plan
+- [ ] All unit tests pass (make test)
+- [ ] New tests verify event sequences without GUI or real models
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
+)"
+# Wait for CI, then:
+gh pr merge <PR_NUMBER> --repo TeodoroTopa/AddaxAI --merge --delete-branch
+git checkout main && git pull origin main
+```
 
 ---
 
 ## Ideas for Future Development
 
-### More substantial testing and CI/CD
-The most impactful next step. Commit a small fixture image set (~5 images, ~1MB) and a
-tiny model checkpoint (~30MB, e.g. MDv5-tiny). Add `test_deploy_pipeline.py` that:
-runs detection on the fixtures, asserts the output JSON structure, and diffs against a
-golden file. Run this on a self-hosted GitHub Actions runner (with models pre-downloaded)
-on every merge to `main`. This would catch 80% of behavioral regressions. A monthly canary
-run against a curated 100-image set with known labels would track model integration quality
-over time.
-
 ### Cloud inference backend
-The architecture is ready for this. `models/deploy.py` is the right place to introduce an
-`InferenceBackend` interface with `LocalBackend` and `CloudBackend` implementations. The
-intended model: MegaDetector runs locally (fast, no uploads), classification runs in the
-cloud (upload crops only, ~10KB per crop). Candidate hosting: HuggingFace Inference
-Endpoints or Replicate (users bring their own API key and pay for compute). This eliminates
-the multi-GB conda environment download for most users while keeping detection offline.
+`models/backend.py` defines the `InferenceBackend` protocol. A `CloudBackend`
+implementation would upload detection crops (~10KB each) to a hosted classification
+endpoint (HuggingFace Inference Endpoints or Replicate). MegaDetector runs locally
+(fast, no uploads). Requires headless deployment (event bus migration must be complete).
 
-### User accounts and model management
-A login system (OAuth via GitHub/Google, or email/password against a hosted backend) would
-enable: syncing user settings and selected models across machines, a model registry hosted
-centrally instead of per-user downloads, usage analytics (which models are popular, which
-species are being detected where), and a future paid tier for cloud inference credits.
-AddaxAI already has a donation popup — a freemium model is a natural next step.
-
-### Additional languages
-The i18n system (`addaxai/i18n/`) makes adding languages cheap: create a new JSON file,
-add the language index to `i18n/__init__.py`, and update the language dropdown. Portuguese
-and German would cover the largest remaining camera trap user communities. The main cost
-is translation quality review, not engineering work.
+### Install with no models
+Currently the installer bundles large model files. A download-on-demand architecture
+would let users install the app (~50MB) and download models later. Requires: atomic
+download manager (download to temp, verify, move on success — addresses the RESUME
+DOWNLOAD TODO), model registry API, and UI for browsing/downloading models.
 
 ### UI framework migration
-The Phase 1–4 extraction means all business logic is now in `addaxai/` and completely
-framework-agnostic. Migrating the UI layer from customtkinter to PySide6 (or Dear PyGui
-for a lighter option) is now a contained effort limited to `AddaxAI_GUI.py` and
-`addaxai/ui/`. PySide6 would enable a proper MVC architecture, better theming, and
-native-feeling widgets on macOS — which currently has rough edges with customtkinter.
+All business logic is framework-agnostic. Migrating from customtkinter to PySide6 is
+a contained effort limited to `addaxai/ui/` once the view protocols are fully
+implemented. PySide6 would give native-feeling widgets on macOS and proper MVC.
 
-### Faster inference
-MegaDetector is already fast, but classification is a bottleneck for large deployments.
-Options: batch inference (the current pipeline processes one image at a time for many
-models), ONNX export for models that support it (eliminates conda env overhead), and
-async/concurrent processing (detect N images while classifying the previous N). The
-subprocess architecture already isolates classification — a concurrent queue with worker
-processes is a natural extension.
+### REST API write endpoints
+`addaxai/api/server.py` has read-only endpoints. Write endpoints (`POST /detect`,
+`GET /jobs/{id}`) would let external tools trigger detection headlessly. Requires
+headless deployment (event bus migration must be complete).
+
+### Additional languages
+The i18n system makes adding languages cheap: create a new JSON file, add the language
+index. Portuguese and German would cover the largest remaining user communities.
 
 ### HITL improvements
-The human-in-the-loop workflow is the most complex remaining area. It currently relies on
-LabelImg (a separate tool) for annotation. A native annotation UI built into AddaxAI
-(using tkinter canvas or a web-based approach via a local Flask server) would eliminate
-the LabelImg dependency, enable real-time sync between reviewed images and the results
-JSON, and allow batch-review workflows (e.g., "accept all detections above 0.9 conf").
-
----
-
-## Phase 6 Recommendations: Open-Source Readiness
-
-The refactoring phases (1–5) established solid foundations: extracted business logic,
-centralized state, added type hints, logging, and i18n. The next phase focuses on making
-the project contributor-friendly, robustly tested, and ready for external integration.
-Work items are ordered by impact — each builds on the previous.
-
-### 6.1 — Project packaging and contributor onboarding
-
-**Problem:** No `pyproject.toml`, no `requirements.txt`, no issue templates, no PR template.
-A new contributor clones the repo and has no standard way to install dependencies or
-understand the contribution workflow.
-
-**Work items:**
-1. Create `pyproject.toml` with project metadata, dependencies, and optional dependency
-   groups (`[project.optional-dependencies]`): `test` (pytest, ruff, mypy), `gui`
-   (customtkinter, Pillow, etc.), `dev` (all of the above). This replaces the ad-hoc
-   `pip install` commands scattered in CLAUDE.md and CI.
-2. Create `requirements.txt` (pinned) for reproducible CI builds, generated from
-   `pip freeze` of the test environment.
-3. Add `.github/ISSUE_TEMPLATE/bug_report.yml` and `feature_request.yml` (structured
-   YAML forms, not freeform markdown) so bug reports include OS, Python version, model
-   used, and steps to reproduce.
-4. Add `.github/pull_request_template.md` with sections: Summary, Test Plan, Checklist
-   (ran tests, ran linter, updated CLAUDE.md if applicable).
-5. Add a `DEVELOPMENT.md` (or expand CONTRIBUTING.md) with a contributor-oriented setup
-   guide: fork → clone → create venv → install `[test]` extras → run tests → open PR.
-   Keep CLAUDE.md as the internal developer handbook; DEVELOPMENT.md is the public face.
-
-### 6.2 — Fix and extend CI/CD
-
-**Problem:** CI currently runs only 2 jobs (unit tests + ruff lint). CLAUDE.md claims
-3 jobs including mypy, but the mypy job does not exist in `test.yml`. No coverage
-reporting, no pre-commit hooks, no branch protection guidance.
-
-**Work items:**
-1. Add a `mypy` job to `.github/workflows/test.yml` — this was documented as done in
-   CLAUDE.md but is actually missing. Run `mypy addaxai/ --ignore-missing-imports
-   --no-strict-optional` on Python 3.11. Fix the CLAUDE.md claim.
-2. Add `pytest-cov` and generate a coverage report. Upload to Codecov or Coveralls.
-   Set a coverage floor (current coverage is ~75–80% for `addaxai/`; start there and
-   ratchet up). Display the badge in README.
-3. Add a `pre-commit` configuration (`.pre-commit-config.yaml`) with ruff, mypy, and
-   trailing-whitespace hooks. Document in DEVELOPMENT.md. This catches issues before
-   they reach CI.
-4. Add branch protection rules documentation: require CI pass + 1 review before merge
-   to `main`. Contributors should target `main` (not `refactor/modularize`).
-5. Add a `test-gui-smoke` job that runs on `ubuntu-latest` with `xvfb-run` — the smoke
-   test only needs tkinter (not customtkinter) and can catch import-time crashes.
-   Conditionally install `python3-tk` via apt.
-
-### 6.3 — JSON schema validation and data contracts
-
-**Problem:** Configuration files (`global_vars.json`, `variables.json`) and recognition
-output JSON have no schema definitions. Unknown keys are silently ignored. This makes it
-impossible for external tools to integrate reliably, and contributors can introduce
-malformed configs without tests catching them.
-
-**Work items:**
-1. Write JSON Schema files for: `global_vars.json`, `variables.json` (per-model config),
-   and the MegaDetector recognition output format. Place in `addaxai/schemas/`.
-2. Add a `validate_config()` function in `addaxai/core/config.py` that validates loaded
-   JSON against the schema. Use `jsonschema` (lightweight, pure Python). Warn on unknown
-   keys instead of silently ignoring.
-3. Add a `validate_recognition_output()` function for the detection/classification JSON.
-   This enables external tools (R packages, cloud dashboards, other Python apps) to
-   validate their output before feeding it to AddaxAI.
-4. Commit example/fixture JSON files in `tests/fixtures/` — valid `global_vars.json`,
-   valid `variables.json`, valid recognition output, and intentionally invalid versions
-   of each. Use these in schema validation tests.
-5. Document the JSON formats in a `docs/data-formats.md` file aimed at integrators
-   (not contributors). Include field descriptions, value ranges, and examples.
-
-### 6.4 — Model adapter protocol and plugin documentation
-
-**Problem:** Adding a new classification model requires creating files in 3 locations
-(`models/cls/`, `classification_utils/model_types/`, and model config JSON) with no
-template, no interface definition, and no documentation. Contributors reverse-engineer
-existing adapters.
-
-**Work items:**
-1. Define an `InferenceBackend` protocol (abstract base class or `typing.Protocol`) in
-   `addaxai/models/backend.py`. Methods: `detect(image_paths, config) → ResultJSON`,
-   `classify(crops, config) → ClassificationResult`. This does not replace the subprocess
-   architecture — it documents the contract that adapters must fulfill.
-2. Create a template adapter in `classification_utils/model_types/_template/` with
-   annotated `classify_detections.py`, `variables.json`, and a README explaining each
-   field.
-3. Write `docs/adding-a-model.md` — step-by-step guide: create directory, fill in
-   variables.json, implement classify_detections.py, test with fixture images.
-4. Add a CI test that validates all `variables.json` files under `models/` against the
-   schema from 6.3. This catches broken model configs before they ship.
-
-### 6.5 — Integration test infrastructure with fixtures
-
-**Problem:** The test suite covers extracted `addaxai/` functions well (325 tests) but
-cannot test the actual detection/classification pipeline, postprocessing file moves,
-or export workflows. These are the features most likely to regress.
-
-**Work items:**
-1. Commit a small fixture dataset in `tests/fixtures/images/` (~5 camera trap images,
-   ~1MB total, Creative Commons licensed). Include one with EXIF GPS, one without, one
-   corrupted, one video frame.
-2. Commit a golden-file recognition JSON (`tests/fixtures/golden_output.json`) — the
-   expected detection result for the fixture images. This does not require a real model;
-   it can be hand-crafted to match the schema from 6.3.
-3. Write `tests/test_postprocess_pipeline.py` — given the golden JSON and fixture images,
-   test `move_files()`, CSV export, COCO export, and verify output structure. These are
-   pure-function tests that run without models or GUI.
-4. Write `tests/test_export_roundtrip.py` — export to CSV, re-import, verify lossless.
-   Export to COCO JSON, validate against schema. Export to XLSX, read back with openpyxl.
-5. Add a `self-hosted` CI job label for future use: when a self-hosted runner with GPU
-   and models is available, run `test_deploy_pipeline.py` against real MegaDetector.
-   Document the runner setup in DEVELOPMENT.md.
-
-### 6.6 — Event bus for UI decoupling
-
-**Problem:** The deploy/classify orchestrators (`start_deploy`, `deploy_model`,
-`classify_detections`) are 400+ lines each in `AddaxAI_GUI.py`. They interleave
-subprocess management, progress updates, messagebox calls, and cancel handling. This
-is the single largest barrier to further modularization and testability.
-
-**Work items:**
-1. Introduce a lightweight event bus in `addaxai/core/events.py`. A simple
-   publish/subscribe pattern: `emit("deploy.progress", pct=50)`,
-   `on("deploy.progress", callback)`. No external dependencies — use stdlib `queue`
-   or a simple listener dict.
-2. Refactor `deploy_model()` to emit events (`deploy.started`, `deploy.progress`,
-   `deploy.image_complete`, `deploy.error`, `deploy.finished`) instead of directly
-   calling `progress_window.update()` and `messagebox.showerror()`.
-3. The GUI subscribes to these events and updates widgets. This lets tests subscribe
-   to the same events and assert the deployment sequence without a GUI.
-4. Repeat for `classify_detections()` and `start_postprocess()`.
-5. This is the architectural prerequisite for cloud inference (6.4's `InferenceBackend`)
-   and for the UI framework migration to PySide6. Prioritize it over those features.
-
-### 6.6b — Break apart AddaxAI_GUI.py
-
-**Problem:** `AddaxAI_GUI.py` is 8,500 lines. The filename itself (`_GUI` suffix,
-inconsistent casing) looks unprofessional for an open-source project. The CLAUDE.md
-"Why `AddaxAI_GUI.py` is still ~8,500 lines" section explains that the *business logic*
-extraction surface is exhausted — but the remaining UI code can still be split by feature
-area once the event bus (6.6) breaks the coupling.
-
-**Work items:**
-1. Rename `AddaxAI_GUI.py` → `addaxai/app.py` (or `addaxai/__main__.py` for
-   `python -m addaxai` support). Update `main.py`, `dev_launch.py`, PyInstaller configs,
-   build workflows, and test harnesses. This is a high-touch rename — do it as a single
-   focused commit.
-2. Define view protocols for each feature area in `addaxai/ui/protocols.py` using
-   `typing.Protocol`. These are the contracts between orchestration logic and the UI:
-   - `DeployView`: `show_progress(pct, message)`, `show_error(msg)`,
-     `set_model_list(models)`, `on_cancel(callback)`, `reset()`
-   - `PostprocessView`: `show_progress(pct, message)`, `show_error(msg)`,
-     `show_completion(summary)`
-   - `HITLView`: `load_annotations(data)`, `show_image(path, boxes)`,
-     `on_save(callback)`
-   - `ResultsView`: `display(recognition_json)`, `set_filters(species, confidence)`
-   The protocols define *what* the UI must do, not *how*. No tkinter types appear in
-   any protocol signature — only plain Python types, dataclasses, and callbacks.
-3. After 6.6's event bus is in place, split `addaxai/app.py` by feature area. Each
-   module implements its protocol with tkinter/customtkinter:
-   - `addaxai/ui/deploy_tab.py` — implements `DeployView`, subscribes to deploy events
-   - `addaxai/ui/postprocess_tab.py` — implements `PostprocessView`
-   - `addaxai/ui/hitl_window.py` — implements `HITLView`
-   - `addaxai/ui/results_viewer.py` — implements `ResultsView`
-   - `addaxai/app.py` — main window construction, menu bar, tab assembly, wires
-     concrete view implementations to the event bus
-4. Target: `app.py` should shrink to ~1,500 lines (window setup + tab wiring). Each
-   feature module should be 500–1,500 lines. No module over 2,000 lines.
-5. This abstraction is what makes a future UI framework migration (PySide6, web-based)
-   a contained effort: write new implementations of the same protocols, swap them in
-   at the wiring layer in `app.py`. The orchestration logic, event bus, and business
-   logic modules never change. Without these protocols, a migration means rewriting
-   every feature module — with them, it means reimplementing a known interface.
-
-### 6.7 — REST API layer for external integration
-
-**Problem:** AddaxAI is a closed desktop app. External tools (R packages, web dashboards,
-mobile apps, cloud pipelines) cannot trigger detection, retrieve results, or monitor
-progress without the GUI.
-
-**Work items:**
-1. Add a lightweight local API server in `addaxai/api/server.py` using FastAPI (or
-   Flask for Python 3.8 compat). Endpoints: `POST /detect` (submit folder, return job
-   ID), `GET /jobs/{id}` (poll status + progress), `GET /jobs/{id}/results` (return
-   recognition JSON), `GET /models` (list available models).
-2. The API server reuses the same `addaxai/` modules — it is an alternative entry point
-   alongside the GUI, not a separate codebase. Both GUI and API call the same
-   `deploy_model()` function (via the event bus from 6.6).
-3. Add OpenAPI/Swagger docs (FastAPI generates these automatically). This is the
-   integration contract for external developers.
-4. This is a medium-term goal — it depends on the event bus (6.6) being in place so
-   that deployment can run without a GUI event loop. Start with a read-only API
-   (`GET /models`, `GET /results`) that works today, then add write endpoints after 6.6.
-
-### 6.8 — Developer experience polish
-
-**Problem:** Small friction points that individually are minor but collectively discourage
-contributions.
-
-**Work items:**
-1. Add a `Makefile` (or `justfile`) with common commands: `make test`, `make lint`,
-   `make typecheck`, `make test-gui`, `make dev` (launch GUI). Reduces cognitive load
-   for new contributors.
-2. Add `mypy.ini` (or `[tool.mypy]` in `pyproject.toml`) so mypy config is in version
-   control, not just in CLAUDE.md prose.
-3. Add `py.typed` marker to `addaxai/` so downstream consumers get type information.
-4. Add GitHub Actions status badges to README: tests, lint, coverage.
-5. Create a `CHANGELOG.md` starting from the refactoring phases. Use Keep a Changelog
-   format. This gives contributors context on what changed and when.
-6. Add `.editorconfig` for consistent formatting across editors (indent style, line
-   endings, trailing whitespace).
-
-### Implementation order
-
-The items above are ordered by dependency and impact. A practical execution sequence:
-
-| Priority | Item | Depends on | Estimated scope |
-|----------|------|------------|-----------------|
-| **P0** | 6.1 — Packaging + onboarding | — | 1–2 sessions |
-| **P0** | 6.2 — Fix CI/CD | 6.1 (for deps) | 1 session |
-| **P1** | 6.3 — JSON schemas | — | 2–3 sessions |
-| **P1** | 6.5 — Integration test fixtures | 6.3 (for schemas) | 2–3 sessions |
-| **P1** | 6.8 — DX polish | 6.1 (for pyproject) | 1 session |
-| **P2** | 6.4 — Model adapter protocol | 6.3 (for schemas) | 2 sessions |
-| **P2** | 6.6 — Event bus | — | 3–4 sessions |
-| **P2** | 6.6b — Break apart GUI file | 6.6 (for decoupling) | 2–3 sessions |
-| **P3** | 6.7 — REST API | 6.6 (for headless deploy) | 3–4 sessions |
-
-P0 items should be done before merging `refactor/modularize` into `main` and inviting
-contributors. P1 items make the first wave of contributions productive. P2/P3 items
-unlock the architectural future (cloud inference, external integrations, UI migration).
-
----
-
-## Phase 6 — Step-by-Step Implementation Plan
-
-This section contains exact instructions for implementing each Phase 6 item. Each step
-specifies the branch, files to create/modify, success criteria, and when to commit. Follow
-these instructions literally — do not improvise or skip steps.
-
-**Branch strategy:**
-- P0 work is done — it was merged to `main` via PR#1 on 2026-03-22.
-- All remaining work (P1/P2/P3) happens on feature branches off `main`, named
-  `phase6/<item>` (e.g. `phase6/json-schemas`, `phase6/event-bus`).
-- Each feature branch merges to `main` via PR when its success criteria pass.
-
-**CRITICAL — Git workflow for every step:**
-This repo is a fork. There are two remotes:
-- `origin` → `TeodoroTopa/AddaxAI` (YOUR FORK — push here, open PRs here)
-- `upstream` → `PetervanLunteren/AddaxAI` (ORIGINAL — never push here, never open PRs here)
-
-For each step that creates a feature branch, follow this exact sequence:
-```bash
-# 1. Start from latest main
-git checkout main
-git pull origin main
-
-# 2. Create the feature branch
-git checkout -b phase6/<branch-name>
-
-# 3. ... do the work, make commits ...
-
-# 4. Push to YOUR FORK (origin), not upstream
-git push -u origin phase6/<branch-name>
-
-# 5. Create PR on YOUR FORK — MUST use --repo flag to avoid targeting upstream
-gh pr create \
-  --repo TeodoroTopa/AddaxAI \
-  --base main \
-  --title "feat: <title>" \
-  --body "<body>"
-
-# 6. Wait for CI, then merge on YOUR FORK
-gh pr merge <PR_NUMBER> --repo TeodoroTopa/AddaxAI --merge --delete-branch
-
-# 7. Return to main for the next step
-git checkout main
-git pull origin main
-```
-
-**NEVER run `gh pr create` without `--repo TeodoroTopa/AddaxAI`.** Without it, `gh`
-defaults to the upstream repo (PetervanLunteren/AddaxAI), which creates unwanted PRs
-on someone else's repository.
-
----
-
-## Phase 6 Progress Tracker
-
-**Current Status:** P0, P1, P2 complete (2026-03-22). All Phase 6 work (Steps 1-14) done. Phase 6 is now feature-complete.
-
-### P0 — Pre-merge work — COMPLETE
-
-| Step | Task | Status | Date | Notes |
-|------|------|--------|------|-------|
-| 1 | Create `pyproject.toml` | ✅ Done | 2026-03-21 | Commit: 6199c8ee |
-| 2 | Add mypy job to CI | ✅ Done | 2026-03-21 | Commit: 52ce500b |
-| 3 | Add coverage reporting to CI | ✅ Done | 2026-03-21 | Commit: 52ce500b |
-| 4 | Add GitHub issue/PR templates | ✅ Done | 2026-03-21 | Commit: 4cc11190 |
-| 5 | Add developer tooling files | ✅ Done | 2026-03-21 | Commit: f8a60288 |
-| 6 | Add pre-commit configuration | ✅ Done | 2026-03-21 | Commit: 0babd0a8 |
-| 7 | Merge to main (P0 gate) | ✅ Done | 2026-03-22 | PR#1 merged, branch deleted |
-
-### P1 — High-impact foundation work
-
-| Step | Task | Status | Date | Notes |
-|------|------|--------|------|-------|
-| 8 | JSON schema validation (6.3) | ✅ Done | 2026-03-22 | PR#2 merged, branch deleted |
-| 9 | Integration test fixtures (6.5) | ✅ Done | 2026-03-22 | PR#3 merged, branch deleted |
-| 10 | Model adapter protocol (6.4) | ✅ Done | 2026-03-22 | PR#4 merged, branch deleted |
-| 11 | Event bus infrastructure (6.6) | ✅ Done | 2026-03-22 | PR#5 merged, branch deleted |
-
-### P2 — Architectural improvements
-
-| Step | Task | Status | Date | Notes |
-|------|------|--------|------|-------|
-| 12 | View protocols (6.6b) | ✅ Done | 2026-03-22 | PR#6 merged, branch deleted |
-| 13 | Rename & extract feature UI (6.6b) | ✅ Done | 2026-03-22 | Commits: 4f1b1e9c, e934d9ca, 0ee91710. All tests pass. |
-| 14 | REST API layer (6.7) | ✅ Done | 2026-03-22 | PR#9 merged. Endpoints: GET /models, /results/{folder}, /health |
-
----
-
-### Steps 1–7: P0 — COMPLETED (2026-03-22)
-
-Steps 1–7 created `pyproject.toml`, CI jobs (mypy, coverage), GitHub issue/PR templates,
-`.editorconfig`, `Makefile`, `addaxai/py.typed`, and `.pre-commit-config.yaml`. All were
-merged to `main` via PR#1 on the fork. The `refactor/modularize` branch was deleted.
-
-**Do not re-execute steps 1–7.** Start from Step 8 below.
-
----
-
-### Step 8: JSON schema validation (6.3)
-
-**Branch setup** (run these exact commands before starting work):
-```bash
-git checkout main
-git pull origin main
-git checkout -b phase6/json-schemas
-```
-
-1. Create directory `addaxai/schemas/`.
-
-2. Create `addaxai/schemas/__init__.py` (empty file).
-
-3. Create `addaxai/schemas/global_vars.schema.json`. To build this schema, read
-   `addaxai/core/config.py` — the `load_global_vars()` function documents every key
-   it reads from `global_vars.json`. Also read a real `global_vars.json` file at
-   `C:\Users\Topam\AddaxAI_files\AddaxAI\global_vars.json` (if accessible) for
-   reference values. The schema should define every known key with its type and a
-   description. Set `"additionalProperties": false` so unknown keys are flagged.
-
-4. Create `addaxai/schemas/model_vars.schema.json`. To build this, read
-   `addaxai/core/config.py` — the `load_model_vars_for()` function documents the keys.
-   Also read any `variables.json` under `classification_utils/model_types/` for examples.
-
-5. Create `addaxai/schemas/recognition_output.schema.json`. The MegaDetector output
-   format is: `{"images": [{"file": str, "detections": [{"category": str, "conf": float,
-   "bbox": [float, float, float, float]}]}], "detection_categories": {"1": "animal", ...}}`.
-   Read `addaxai/utils/json_ops.py` for the exact keys the app reads from this JSON.
-
-6. Create `addaxai/schemas/validate.py`:
-
-```python
-"""JSON schema validation for AddaxAI configuration and output files."""
-
-import json
-import logging
-import os
-from typing import Any, Dict, List, Tuple
-
-logger = logging.getLogger(__name__)
-
-_SCHEMA_DIR = os.path.dirname(os.path.abspath(__file__))
-
-
-def _load_schema(name: str) -> Dict[str, Any]:
-    path = os.path.join(_SCHEMA_DIR, name)
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def validate_global_vars(data: Dict[str, Any]) -> Tuple[bool, List[str]]:
-    """Validate global_vars.json data against schema.
-
-    Returns (is_valid, list_of_error_messages).
-    Does NOT require jsonschema — uses manual validation against the schema
-    definition so there is no added dependency.
-    """
-    schema = _load_schema("global_vars.schema.json")
-    errors = []
-    props = schema.get("properties", {})
-
-    # Check for unknown keys
-    for key in data:
-        if key not in props:
-            errors.append(f"Unknown key: '{key}'")
-
-    # Check types of known keys
-    for key, prop_def in props.items():
-        if key in data:
-            expected_type = prop_def.get("type")
-            value = data[key]
-            if expected_type == "string" and not isinstance(value, str):
-                errors.append(f"Key '{key}': expected string, got {type(value).__name__}")
-            elif expected_type == "number" and not isinstance(value, (int, float)):
-                errors.append(f"Key '{key}': expected number, got {type(value).__name__}")
-            elif expected_type == "boolean" and not isinstance(value, bool):
-                errors.append(f"Key '{key}': expected boolean, got {type(value).__name__}")
-
-    return (len(errors) == 0, errors)
-```
-
-   Write similar `validate_model_vars()` and `validate_recognition_output()` functions.
-   Use manual validation — do NOT add `jsonschema` as a dependency. The schemas are
-   reference documentation; the validation functions check types and unknown keys.
-
-7. Create `tests/fixtures/` directory. Add:
-   - `tests/fixtures/global_vars_valid.json` — a valid config (copy key structure
-     from `load_global_vars()` defaults).
-   - `tests/fixtures/global_vars_invalid.json` — has wrong types and unknown keys.
-   - `tests/fixtures/recognition_output_valid.json` — small valid detection result
-     (2 images, 3 detections).
-   - `tests/fixtures/recognition_output_invalid.json` — missing required fields.
-
-8. Create `tests/test_schemas.py`:
-   - Test that valid fixtures pass validation.
-   - Test that invalid fixtures fail with specific error messages.
-   - Test that every key in a real `global_vars.json` (from fixtures) is in the schema.
-   - Target: 12–15 tests.
-
-9. Run: `.venv/Scripts/python -m pytest tests/test_schemas.py -v` — all pass.
-   Run: `.venv/Scripts/python -m pytest tests/ -v` — all existing tests still pass.
-   Run: `.venv/Scripts/mypy addaxai/ --ignore-missing-imports --no-strict-optional` — clean.
-
-10. Commit: `feat: add JSON schema validation for config and recognition output`
-
-11. Push and create PR on YOUR FORK, then merge:
-```bash
-git push -u origin phase6/json-schemas
-gh pr create --repo TeodoroTopa/AddaxAI --base main \
-  --title "feat: add JSON schema validation for config and recognition output" \
-  --body "Adds JSON schemas for global_vars, model_vars, and recognition output. Includes validate.py with manual validation (no jsonschema dependency) and 12-15 tests."
-# Wait for CI to pass, then:
-gh pr merge <PR_NUMBER> --repo TeodoroTopa/AddaxAI --merge --delete-branch
-git checkout main && git pull origin main
-```
-
-12. Update the progress tracker in CLAUDE.md: mark Step 8 as ✅ Done with the date.
-
----
-
-### Step 9: Integration test fixtures (6.5)
-
-**Branch setup:**
-```bash
-git checkout main
-git pull origin main
-git checkout -b phase6/test-fixtures
-```
-
-1. Add fixture images to `tests/fixtures/images/`. You need 3–5 small JPEG images
-   (< 200KB each). Options:
-   - Use Creative Commons camera trap images from LILA Science (https://lila.science).
-   - Or create synthetic test images using Pillow in a setup script.
-   For the implementation, create a helper `tests/fixtures/create_test_images.py` that
-   generates synthetic images using Pillow (colored rectangles, ~10KB each) so there
-   are no licensing concerns. Run it once and commit the generated images.
-
-2. Create `tests/fixtures/golden_output.json` — a hand-crafted recognition result
-   matching the fixture images. Follow the schema from step 8. Example structure:
-
-```json
-{
-  "images": [
-    {
-      "file": "test_animal.jpg",
-      "detections": [
-        {"category": "1", "conf": 0.95, "bbox": [0.1, 0.2, 0.5, 0.6]}
-      ]
-    },
-    {
-      "file": "test_empty.jpg",
-      "detections": []
-    },
-    {
-      "file": "test_person.jpg",
-      "detections": [
-        {"category": "2", "conf": 0.88, "bbox": [0.3, 0.1, 0.7, 0.8]}
-      ]
-    }
-  ],
-  "detection_categories": {
-    "1": "animal",
-    "2": "person",
-    "3": "vehicle"
-  }
-}
-```
-
-3. Create `tests/test_postprocess_pipeline.py`:
-   - Import `addaxai.processing.postprocess.move_files` and
-     `addaxai.processing.postprocess.format_size`.
-   - Test `move_files()` in a temp directory: copy fixture images to temp, run
-     `move_files()` with the golden JSON, verify files are moved to correct
-     subdirectories (animal/, person/, empty/).
-   - Test that `move_files()` with `copy=True` preserves originals.
-   - Test that `move_files()` handles missing image files gracefully.
-   - Target: 6–8 tests.
-
-4. Create `tests/test_export_roundtrip.py`:
-   - Test CSV export: write golden JSON → CSV using the export functions in
-     `addaxai/processing/export.py`, read back, verify column names and row count.
-   - Test COCO export: call `csv_to_coco()`, validate output against the
-     recognition output schema from step 8.
-   - Test that exported data round-trips without data loss (dates, confidence
-     values, bounding box coordinates).
-   - Target: 8–10 tests.
-
-5. Run full test suite: `.venv/Scripts/python -m pytest tests/ -v` — all pass.
-
-6. Commit: `feat: add integration test fixtures and pipeline/export tests`
-
-7. Push and create PR on YOUR FORK, then merge:
-```bash
-git push -u origin phase6/test-fixtures
-gh pr create --repo TeodoroTopa/AddaxAI --base main \
-  --title "feat: add integration test fixtures and pipeline/export tests" \
-  --body "Adds fixture images (synthetic via Pillow), golden output JSON, and tests for move_files(), CSV export, and COCO export round-trips."
-# Wait for CI to pass, then:
-gh pr merge <PR_NUMBER> --repo TeodoroTopa/AddaxAI --merge --delete-branch
-git checkout main && git pull origin main
-```
-
-8. Update the progress tracker in CLAUDE.md: mark Step 9 as ✅ Done with the date.
-
----
-
-### Step 10: Model adapter protocol (6.4)
-
-**Branch setup:**
-```bash
-git checkout main
-git pull origin main
-git checkout -b phase6/model-protocol
-```
-
-1. Create `addaxai/models/backend.py`:
-
-```python
-"""Inference backend protocol — the contract all model adapters must fulfill."""
-
-from typing import Any, Dict, List, Optional, Protocol
-
-
-class DetectionResult:
-    """Structured detection result for a single image."""
-
-    def __init__(
-        self,
-        file: str,
-        detections: List[Dict[str, Any]],
-    ) -> None:
-        self.file = file
-        self.detections = detections
-
-
-class InferenceBackend(Protocol):
-    """Protocol that all inference backends must implement.
-
-    Current implementations:
-    - LocalSubprocessBackend (each model adapter in classification_utils/model_types/)
-
-    Future implementations:
-    - CloudBackend (HuggingFace / Replicate API)
-    - ONNXBackend (local ONNX runtime, no conda env needed)
-    """
-
-    def detect(
-        self,
-        image_paths: List[str],
-        model_path: str,
-        confidence_threshold: float,
-        **kwargs: Any,
-    ) -> List[DetectionResult]:
-        """Run object detection on a list of images."""
-        ...
-
-    def classify(
-        self,
-        crops: List[Dict[str, Any]],
-        model_path: str,
-        class_threshold: float,
-        **kwargs: Any,
-    ) -> Dict[str, Any]:
-        """Run species classification on detection crops."""
-        ...
-
-    def is_available(self) -> bool:
-        """Check if this backend is ready (model downloaded, env exists, etc.)."""
-        ...
-```
-
-2. Create `classification_utils/model_types/_template/` directory with:
-
-   `classification_utils/model_types/_template/classify_detections.py`:
-   ```python
-   """
-   Template classification adapter.
-
-   Copy this directory to create a new model adapter. Replace all TODO comments.
-
-   This script is invoked as a subprocess by AddaxAI:
-       python classify_detections.py <AddaxAI_files> <model_path> <det_thresh>
-           <cls_thresh> <smooth> <json_path> <temp_frame_folder>
-           <tax_fallback> <tax_levels_idx>
-
-   Arguments (positional, via sys.argv):
-       1. AddaxAI_files     - base path to AddaxAI installation
-       2. cls_model_fpath   - path to model checkpoint file
-       3. cls_detec_thresh   - detection confidence threshold (float)
-       4. cls_class_thresh   - classification confidence threshold (float)
-       5. smooth_bool       - "True"/"False" — smooth predictions across sequence
-       6. json_path         - path to input/output recognition JSON
-       7. temp_frame_folder - path to temp video frames (or "None")
-       8. cls_tax_fallback  - "True"/"False" — use taxonomic fallback
-       9. cls_tax_levels_idx - taxonomy level index (int)
-   """
-
-   import json
-   import sys
-   from PIL import ImageFile
-
-   ImageFile.LOAD_TRUNCATED_IMAGES = True
-
-   # ── Parse CLI arguments (same for all adapters — do not change) ────
-   AddaxAI_files = str(sys.argv[1])
-   cls_model_fpath = str(sys.argv[2])
-   cls_detec_thresh = float(sys.argv[3])
-   cls_class_thresh = float(sys.argv[4])
-   smooth_bool = True if sys.argv[5] == 'True' else False
-   json_path = str(sys.argv[6])
-   temp_frame_folder = None if str(sys.argv[7]) == 'None' else str(sys.argv[7])
-   cls_tax_fallback = True if sys.argv[8] == 'True' else False
-   cls_tax_levels_idx = int(sys.argv[9])
-
-   # ── TODO: Model-specific imports ──────────────────────────────────
-   # import torch / tensorflow / etc.
-
-   # ── TODO: Load model ──────────────────────────────────────────────
-   # model = load_your_model(cls_model_fpath)
-
-   # ── Read input JSON ───────────────────────────────────────────────
-   with open(json_path, "r") as f:
-       data = json.load(f)
-
-   # ── TODO: Classify each detection ─────────────────────────────────
-   # For each image in data["images"]:
-   #   For each detection in image["detections"]:
-   #     if detection["conf"] >= cls_detec_thresh:
-   #       crop the detection region from the image
-   #       prediction = model.predict(crop)
-   #       if prediction.confidence >= cls_class_thresh:
-   #         detection["classifications"] = [
-   #           [prediction.label, prediction.confidence]
-   #         ]
-
-   # ── Write output JSON ─────────────────────────────────────────────
-   with open(json_path, "w") as f:
-       json.dump(data, f, indent=1)
-   ```
-
-   `classification_utils/model_types/_template/README.md`:
-   ```markdown
-   # Model Adapter Template
-
-   Copy this directory and rename it to your model's name
-   (e.g. `my-model-v1.0/`).
-
-   ## Required files
-
-   1. `classify_detections.py` — the classification script (this template)
-   2. A `variables.json` in `models/cls/<model-name>/` — model configuration
-
-   ## variables.json fields
-
-   Create `AddaxAI_files/AddaxAI/models/cls/<model-name>/variables.json`:
-
-   ```json
-   {
-     "model_type": "<model-name>",
-     "framework": "pytorch|tensorflow|onnx",
-     "cls_model_fname": "<checkpoint-filename>",
-     "info_url": "https://...",
-     "developer": "Your Name",
-     "description": "Short model description",
-     "all_classes": ["species1", "species2", "..."]
-   }
-   ```
-
-   ## Testing your adapter
-
-   1. Place model checkpoint in `AddaxAI_files/AddaxAI/models/cls/<model-name>/`
-   2. Create `variables.json` as above
-   3. Run AddaxAI, select your model, process test images
-   4. Verify output JSON has `classifications` arrays on detections
-   ```
-
-3. Create `tests/test_model_protocol.py`:
-   - Test that `InferenceBackend` protocol can be instantiated with a mock.
-   - Test that `DetectionResult` holds data correctly.
-   - Test that the `_template/classify_detections.py` is valid Python (import and
-     compile, do not execute).
-   - Target: 5–6 tests.
-
-4. Run full test suite. Verify all pass.
-
-5. Commit: `feat: add InferenceBackend protocol and model adapter template`
-
-6. Push and create PR on YOUR FORK, then merge:
-```bash
-git push -u origin phase6/model-protocol
-gh pr create --repo TeodoroTopa/AddaxAI --base main \
-  --title "feat: add InferenceBackend protocol and model adapter template" \
-  --body "Defines the InferenceBackend typing.Protocol in addaxai/models/backend.py and adds an annotated template adapter in classification_utils/model_types/_template/."
-# Wait for CI to pass, then:
-gh pr merge <PR_NUMBER> --repo TeodoroTopa/AddaxAI --merge --delete-branch
-git checkout main && git pull origin main
-```
-
-7. Update the progress tracker in CLAUDE.md: mark Step 10 as ✅ Done with the date.
-
----
-
-### Step 11: Event bus (6.6)
-
-**Branch setup:**
-```bash
-git checkout main
-git pull origin main
-git checkout -b phase6/event-bus
-```
-
-This is the most complex step. Take it in sub-commits.
-
-**Sub-step 11a: Create the event bus module.**
-
-1. Create `addaxai/core/events.py`:
-
-```python
-"""Lightweight publish/subscribe event bus.
-
-Usage:
-    from addaxai.core.events import event_bus
-
-    # Subscribe
-    def on_progress(pct: float, message: str) -> None:
-        print(f"{pct}%: {message}")
-
-    event_bus.on("deploy.progress", on_progress)
-
-    # Publish
-    event_bus.emit("deploy.progress", pct=50.0, message="Processing image 5/10")
-
-    # Unsubscribe
-    event_bus.off("deploy.progress", on_progress)
-
-    # Unsubscribe all listeners for an event
-    event_bus.clear("deploy.progress")
-"""
-
-import logging
-from typing import Any, Callable, Dict, List
-
-logger = logging.getLogger(__name__)
-
-
-class EventBus:
-    """Simple synchronous event bus. Not thread-safe — designed for
-    single-threaded tkinter event loop usage."""
-
-    def __init__(self) -> None:
-        self._listeners: Dict[str, List[Callable[..., Any]]] = {}
-
-    def on(self, event: str, callback: Callable[..., Any]) -> None:
-        """Register a callback for an event."""
-        if event not in self._listeners:
-            self._listeners[event] = []
-        if callback not in self._listeners[event]:
-            self._listeners[event].append(callback)
-
-    def off(self, event: str, callback: Callable[..., Any]) -> None:
-        """Remove a callback for an event."""
-        if event in self._listeners:
-            self._listeners[event] = [
-                cb for cb in self._listeners[event] if cb is not callback
-            ]
-
-    def emit(self, event: str, **kwargs: Any) -> None:
-        """Emit an event, calling all registered callbacks with kwargs."""
-        for callback in self._listeners.get(event, []):
-            try:
-                callback(**kwargs)
-            except Exception:
-                logger.error(
-                    "Error in event handler for '%s'", event, exc_info=True
-                )
-
-    def clear(self, event: str) -> None:
-        """Remove all listeners for an event."""
-        self._listeners.pop(event, None)
-
-    def clear_all(self) -> None:
-        """Remove all listeners for all events."""
-        self._listeners.clear()
-
-
-# Module-level singleton — import this in all modules.
-event_bus = EventBus()
-```
-
-2. Create `tests/test_event_bus.py`:
-   - Test `on()` + `emit()` calls the callback with correct kwargs.
-   - Test `off()` removes a specific callback.
-   - Test `clear()` removes all callbacks for one event.
-   - Test `clear_all()` removes everything.
-   - Test that a failing callback does not prevent other callbacks from running.
-   - Test that duplicate `on()` calls do not register twice.
-   - Test emitting an event with no listeners does not raise.
-   - Target: 10–12 tests.
-
-3. Run tests. All pass.
-
-4. Commit: `feat: add lightweight event bus (addaxai/core/events.py)`
-
-**Sub-step 11b: Define the standard event names.**
-
-1. Create `addaxai/core/event_types.py`:
-
-```python
-"""Standard event names emitted by AddaxAI.
-
-These are string constants — not an enum — so they can be used as dict keys
-and in f-strings without .value access. Grouped by feature area.
-"""
-
-# ── Deployment ────────────────────────────────────────────────────────
-DEPLOY_STARTED = "deploy.started"
-DEPLOY_PROGRESS = "deploy.progress"           # pct: float, message: str
-DEPLOY_IMAGE_COMPLETE = "deploy.image_complete"  # image_path: str, index: int, total: int
-DEPLOY_ERROR = "deploy.error"                 # message: str, exc: Optional[Exception]
-DEPLOY_CANCELLED = "deploy.cancelled"
-DEPLOY_FINISHED = "deploy.finished"           # results_path: str
-
-# ── Classification ────────────────────────────────────────────────────
-CLASSIFY_STARTED = "classify.started"
-CLASSIFY_PROGRESS = "classify.progress"       # pct: float, message: str
-CLASSIFY_ERROR = "classify.error"             # message: str
-CLASSIFY_FINISHED = "classify.finished"       # results_path: str
-
-# ── Postprocessing ────────────────────────────────────────────────────
-POSTPROCESS_STARTED = "postprocess.started"
-POSTPROCESS_PROGRESS = "postprocess.progress"  # pct: float, message: str
-POSTPROCESS_ERROR = "postprocess.error"        # message: str
-POSTPROCESS_FINISHED = "postprocess.finished"
-
-# ── Model management ─────────────────────────────────────────────────
-MODEL_DOWNLOAD_STARTED = "model.download_started"    # model_name: str
-MODEL_DOWNLOAD_PROGRESS = "model.download_progress"  # pct: float
-MODEL_DOWNLOAD_FINISHED = "model.download_finished"  # model_name: str
-MODEL_DOWNLOAD_ERROR = "model.download_error"        # model_name: str, message: str
-```
-
-2. Add tests in `tests/test_event_bus.py` that verify all event name constants are
-   unique strings.
-
-3. Commit: `feat: add standard event type constants`
-
-**Sub-step 11c: Wire one orchestrator to the event bus (proof of concept).**
-
-This sub-step modifies `AddaxAI_GUI.py`. Be careful — this file is large and fragile.
-
-1. In `AddaxAI_GUI.py`, find the `deploy_model()` function. Identify every place it
-   calls `progress_window.update_values()` or similar progress update. These are the
-   places to add `event_bus.emit()` calls.
-
-2. Add `from addaxai.core.events import event_bus` and
-   `from addaxai.core.event_types import DEPLOY_STARTED, DEPLOY_PROGRESS, DEPLOY_FINISHED, DEPLOY_ERROR, DEPLOY_CANCELLED`
-   to the imports in `AddaxAI_GUI.py`.
-
-3. At the start of `deploy_model()`, add:
-   `event_bus.emit(DEPLOY_STARTED)`
-
-4. At each progress update point, add an `event_bus.emit()` call **alongside** the
-   existing `progress_window` call (do not remove the existing call yet — dual-write):
-   `event_bus.emit(DEPLOY_PROGRESS, pct=percentage, message=status_text)`
-
-5. At the end of `deploy_model()`, add:
-   `event_bus.emit(DEPLOY_FINISHED, results_path=json_path)`
-
-6. On error, add:
-   `event_bus.emit(DEPLOY_ERROR, message=error_msg)`
-
-7. On cancel, add:
-   `event_bus.emit(DEPLOY_CANCELLED)`
-
-8. Run the GUI smoke test to verify nothing broke:
-   `C:\Users\Topam\AddaxAI_files\envs\env-base\python.exe -m pytest tests/test_gui_smoke.py -v`
-
-9. Run unit tests to verify no import errors:
-   `.venv/Scripts/python -m pytest tests/ -v`
-
-10. Commit: `feat: wire deploy_model() to event bus (dual-write, no behavior change)`
-
-11. Repeat sub-step 11c for `classify_detections()` and `start_postprocess()` in
-    separate commits.
-
-12. Push and create PR on YOUR FORK, then merge:
-```bash
-git push -u origin phase6/event-bus
-gh pr create --repo TeodoroTopa/AddaxAI --base main \
-  --title "feat: add event bus infrastructure with deploy_model wiring" \
-  --body "Adds EventBus class, standard event type constants, and dual-write event emissions in deploy_model(), classify_detections(), and start_postprocess()."
-# Wait for CI to pass, then:
-gh pr merge <PR_NUMBER> --repo TeodoroTopa/AddaxAI --merge --delete-branch
-git checkout main && git pull origin main
-```
-
-13. Update the progress tracker in CLAUDE.md: mark Step 11 as ✅ Done with the date.
-
----
-
-### Step 12: View protocols (part of 6.6b)
-
-**Branch setup:**
-```bash
-git checkout main
-git pull origin main
-git checkout -b phase6/view-protocols
-```
-
-1. Create `addaxai/ui/protocols.py`:
-
-```python
-"""View protocols — contracts between orchestration logic and the UI.
-
-Each protocol defines what a UI component must be able to do, without
-specifying how (no tkinter/Qt/web types in signatures). Orchestration
-code and the event bus talk to these protocols. Concrete implementations
-live in the ui/ subpackages.
-"""
-
-from typing import Any, Callable, Dict, List, Optional, Protocol
-
-
-class DeployView(Protocol):
-    """UI contract for the deployment workflow."""
-
-    def show_progress(self, pct: float, message: str) -> None: ...
-    def show_error(self, message: str) -> None: ...
-    def show_completion(self, results_path: str) -> None: ...
-    def set_model_list(self, models: List[str]) -> None: ...
-    def on_cancel(self, callback: Callable[[], None]) -> None: ...
-    def reset(self) -> None: ...
-
-
-class PostprocessView(Protocol):
-    """UI contract for postprocessing."""
-
-    def show_progress(self, pct: float, message: str) -> None: ...
-    def show_error(self, message: str) -> None: ...
-    def show_completion(self, summary: Dict[str, Any]) -> None: ...
-    def reset(self) -> None: ...
-
-
-class HITLView(Protocol):
-    """UI contract for human-in-the-loop annotation."""
-
-    def load_annotations(self, data: Dict[str, Any]) -> None: ...
-    def show_image(self, path: str, boxes: List[Dict[str, Any]]) -> None: ...
-    def on_save(self, callback: Callable[[Dict[str, Any]], None]) -> None: ...
-    def reset(self) -> None: ...
-
-
-class ResultsView(Protocol):
-    """UI contract for results display."""
-
-    def display(self, recognition_json: Dict[str, Any]) -> None: ...
-    def set_filters(
-        self,
-        species: Optional[List[str]],
-        confidence: Optional[float],
-    ) -> None: ...
-    def reset(self) -> None: ...
-```
-
-2. Create `tests/test_view_protocols.py`:
-   - For each protocol, create a minimal mock class that implements it.
-   - Verify the mock satisfies `isinstance` checks via `runtime_checkable` (add
-     `@runtime_checkable` decorator to each protocol).
-   - Verify that a class missing a method does NOT satisfy the protocol.
-   - Target: 8–10 tests.
-
-3. Run full test suite. All pass.
-
-4. Commit: `feat: add view protocols for UI decoupling (DeployView, PostprocessView, HITLView, ResultsView)`
-
-5. Push and create PR on YOUR FORK, then merge:
-```bash
-git push -u origin phase6/view-protocols
-gh pr create --repo TeodoroTopa/AddaxAI --base main \
-  --title "feat: add view protocols for UI decoupling" \
-  --body "Adds runtime_checkable Protocol classes (DeployView, PostprocessView, HITLView, ResultsView) in addaxai/ui/protocols.py with tests."
-# Wait for CI to pass, then:
-gh pr merge <PR_NUMBER> --repo TeodoroTopa/AddaxAI --merge --delete-branch
-git checkout main && git pull origin main
-```
-
-6. Update the progress tracker in CLAUDE.md: mark Step 12 as ✅ Done with the date.
-
----
-
-### Step 13: Rename and break apart the GUI file (6.6b)
-
-**Branch setup:**
-```bash
-git checkout main
-git pull origin main
-git checkout -b phase6/gui-restructure
-```
-
-This is the highest-risk step. Take it in sub-commits, run the GUI smoke test after each.
-
-**Sub-step 13a: Rename `AddaxAI_GUI.py` → `addaxai/app.py`.**
-
-1. `git mv AddaxAI_GUI.py addaxai/app.py`
-
-2. In `addaxai/app.py`, update the `AddaxAI_files` path resolution line (line 114).
-   The old logic derives the path from `__file__`:
-   ```python
-   AddaxAI_files = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-   ```
-   After the move, the file is one level deeper (`addaxai/app.py` instead of root).
-   Change to:
-   ```python
-   AddaxAI_files = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
-   ```
-   (Three `dirname` calls instead of two, because `addaxai/app.py` is two levels below
-   the repo root, which is one level below `AddaxAI_files`.)
-
-3. Update `main.py` line 36 — change:
-   ```python
-   GUI_script = os.path.join(AddaxAI_files, "AddaxAI", "AddaxAI_GUI.py")
-   ```
-   to:
-   ```python
-   GUI_script = os.path.join(AddaxAI_files, "AddaxAI", "addaxai", "app.py")
-   ```
-
-4. Update `dev_launch.py` line 23 — change:
-   ```python
-   gui_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "AddaxAI_GUI.py")
-   ```
-   to:
-   ```python
-   gui_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "addaxai", "app.py")
-   ```
-
-5. Update `dev_launch.py` lines 29–31 — the string replacement target must match the
-   NEW path resolution line (three `dirname` calls):
-   ```python
-   source = source.replace(
-       "AddaxAI_files = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))",
-       f"AddaxAI_files = r'{ADDAXAI_FILES}'"
-   )
-   ```
-
-6. Update `tests/gui_test_runner.py` line 36 — change:
-   ```python
-   gui_path = os.path.join(REPO_ROOT, "AddaxAI_GUI.py")
-   ```
-   to:
-   ```python
-   gui_path = os.path.join(REPO_ROOT, "addaxai", "app.py")
-   ```
-
-7. Update `tests/gui_test_runner.py` lines 42–44 — same string replacement fix as
-   `dev_launch.py` (three `dirname` calls in the target string).
-
-8. Search the entire repo for any remaining references to `AddaxAI_GUI`:
-   ```bash
-   grep -r "AddaxAI_GUI" --include="*.py" --include="*.yml" --include="*.yaml" --include="*.md"
-   ```
-   Update every hit. Common locations: CLAUDE.md, CONTRIBUTING.md, README.md, comments
-   in test files, docstrings.
-
-9. Run the GUI smoke test:
-   ```bash
-   C:\Users\Topam\AddaxAI_files\envs\env-base\python.exe -m pytest tests/test_gui_smoke.py -v
-   ```
-
-10. Run unit tests:
-    ```bash
-    .venv/Scripts/python -m pytest tests/ -v
-    ```
-
-11. Run GUI integration tests:
-    ```bash
-    C:\Users\Topam\AddaxAI_files\envs\env-base\python.exe -m pytest tests/test_gui_integration.py -v
-    ```
-
-12. All three must pass. If any fail, the path resolution is wrong — debug before continuing.
-
-13. Commit: `refactor: rename AddaxAI_GUI.py to addaxai/app.py`
-
-**Sub-step 13b: Extract deployment UI.**
-
-Wait until step 11 (event bus) is merged and the dual-write emit calls are in
-`addaxai/app.py`. Then:
-
-1. Identify all functions in `addaxai/app.py` related to deployment UI:
-   - The deployment progress section of `start_deploy()`
-   - Widget construction for the deploy tab
-   - Event handlers for deploy buttons
-
-2. Create `addaxai/ui/deploy_tab.py`. Move the deployment widget construction and
-   event handler code into a class that implements `DeployView` (from step 12).
-
-3. In `addaxai/app.py`, replace the moved code with an instantiation of the new class
-   and wire it to the event bus.
-
-4. Run all three test suites (unit, smoke, integration). All must pass.
-
-5. Commit: `refactor: extract deployment UI to addaxai/ui/deploy_tab.py`
-
-**Sub-step 13c–e:** Repeat for postprocessing UI, HITL UI, and results viewer.
-Each is a separate commit. Run all tests after each.
-
-6. Push and create PR on YOUR FORK, then merge:
-```bash
-git push -u origin phase6/gui-restructure
-gh pr create --repo TeodoroTopa/AddaxAI --base main \
-  --title "refactor: rename AddaxAI_GUI.py to addaxai/app.py and extract feature UI modules" \
-  --body "Renames the monolith to addaxai/app.py, extracts deploy/postprocess/HITL/results UI modules implementing view protocols. All tests (unit, smoke, integration) pass."
-# Wait for CI to pass, then:
-gh pr merge <PR_NUMBER> --repo TeodoroTopa/AddaxAI --merge --delete-branch
-git checkout main && git pull origin main
-```
-
-7. Update the progress tracker in CLAUDE.md: mark Step 13 as ✅ Done with the date.
-
----
-
-### Step 14: REST API layer (6.7)
-
-**Branch setup:**
-```bash
-git checkout main
-git pull origin main
-git checkout -b phase6/rest-api
-```
-
-This depends on step 11 (event bus) being merged.
-
-1. Add `fastapi` and `uvicorn` to `pyproject.toml` under a new optional dependency
-   group `[project.optional-dependencies] api = ["fastapi", "uvicorn"]`.
-
-2. Create `addaxai/api/__init__.py` (empty).
-
-3. Create `addaxai/api/server.py` — a FastAPI app with read-only endpoints first:
-
-```python
-"""Local REST API server for AddaxAI.
-
-Start with: uvicorn addaxai.api.server:app --port 6189
-"""
-
-import json
-import os
-from typing import Any, Dict, List, Optional
-
-from fastapi import FastAPI, HTTPException
-
-app = FastAPI(
-    title="AddaxAI API",
-    description="Local API for camera trap image classification",
-    version="0.1.0",
-)
-
-
-def _get_base_path() -> str:
-    """Resolve AddaxAI_files path."""
-    # Check environment variable first, then default locations
-    base = os.environ.get("ADDAXAI_FILES")
-    if base and os.path.isdir(base):
-        return base
-    raise HTTPException(
-        status_code=500,
-        detail="ADDAXAI_FILES environment variable not set",
-    )
-
-
-@app.get("/models")
-def list_models() -> Dict[str, List[str]]:
-    """List available detection and classification models."""
-    from addaxai.models.registry import fetch_known_models
-    from addaxai.core.paths import get_model_dir
-
-    base = _get_base_path()
-    det_dir = get_model_dir(base, "det")
-    cls_dir = get_model_dir(base, "cls")
-    return {
-        "detection": fetch_known_models(det_dir),
-        "classification": fetch_known_models(cls_dir),
-    }
-
-
-@app.get("/results/{folder_name}")
-def get_results(folder_name: str) -> Dict[str, Any]:
-    """Get recognition results for a processed folder."""
-    base = _get_base_path()
-    json_path = os.path.join(base, folder_name, "image_recognition_file.json")
-    if not os.path.isfile(json_path):
-        raise HTTPException(status_code=404, detail="Results not found")
-    with open(json_path, "r") as f:
-        return json.load(f)
-
-
-@app.get("/health")
-def health() -> Dict[str, str]:
-    return {"status": "ok"}
-```
-
-4. Create `tests/test_api.py`:
-   - Use FastAPI's `TestClient` (from `fastapi.testclient`).
-   - Test `/health` returns 200.
-   - Test `/models` with a mocked `ADDAXAI_FILES` temp directory containing model dirs.
-   - Test `/results/{folder}` with a fixture JSON.
-   - Test `/results/{missing}` returns 404.
-   - Target: 6–8 tests.
-
-5. Mark API tests to skip if `fastapi` is not installed:
-   ```python
-   pytest.importorskip("fastapi")
-   ```
-
-6. Run unit tests. All pass (API tests skip in envs without fastapi).
-
-7. Commit: `feat: add read-only REST API layer (GET /models, /results, /health)`
-
-8. Push and create PR on YOUR FORK, then merge:
-```bash
-git push -u origin phase6/rest-api
-gh pr create --repo TeodoroTopa/AddaxAI --base main \
-  --title "feat: add read-only REST API layer" \
-  --body "Adds FastAPI server with GET /models, /results/{folder}, and /health endpoints. Tests skip when fastapi is not installed."
-# Wait for CI to pass, then:
-gh pr merge <PR_NUMBER> --repo TeodoroTopa/AddaxAI --merge --delete-branch
-git checkout main && git pull origin main
-```
-
-9. Update the progress tracker in CLAUDE.md: mark Step 14 as ✅ Done with the date.
-
----
-
-### Verification checklist
-
-After all steps are complete, verify the following:
-
-- [ ] `pyproject.toml` exists with all metadata, deps, and tool config
-- [ ] CI runs 3 jobs: test (with coverage), lint, typecheck
-- [ ] `.github/ISSUE_TEMPLATE/` has bug report and feature request forms
-- [ ] `.github/pull_request_template.md` exists
-- [ ] `.editorconfig`, `Makefile`, `.pre-commit-config.yaml` exist
-- [ ] `addaxai/py.typed` marker exists
-- [ ] `addaxai/schemas/` has 3 JSON schemas and a `validate.py` module
-- [ ] `tests/fixtures/` has test images, golden output, valid/invalid configs
-- [ ] `addaxai/models/backend.py` defines `InferenceBackend` protocol
-- [ ] `classification_utils/model_types/_template/` has annotated adapter template
-- [ ] `addaxai/core/events.py` has `EventBus` class and module-level `event_bus`
-- [ ] `addaxai/core/event_types.py` has all standard event constants
-- [ ] `addaxai/ui/protocols.py` has 4 view protocols
-- [ ] `AddaxAI_GUI.py` no longer exists — it is now `addaxai/app.py`
-- [ ] `addaxai/app.py` is under 2,000 lines
-- [ ] Feature UI modules exist in `addaxai/ui/` (deploy, postprocess, HITL, results)
-- [ ] `addaxai/api/server.py` has working read-only endpoints
-- [ ] All unit tests pass (target: 400+)
-- [ ] GUI smoke test passes
-- [ ] GUI integration tests pass
-- [ ] No references to `AddaxAI_GUI` remain anywhere in the repo
+Native annotation UI (eliminating LabelImg dependency), batch-review workflows, and
+the 15 sub-items from the app.py TODOs.

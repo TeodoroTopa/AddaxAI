@@ -42,9 +42,24 @@ class PostprocessTab:
         event_bus.on(POSTPROCESS_ERROR, self._on_postprocess_error)
         event_bus.on(POSTPROCESS_FINISHED, self._on_postprocess_finished)
 
-    def _on_postprocess_progress(self, pct: float, message: str) -> None:
-        """Handle postprocessing progress event."""
+    def _on_postprocess_progress(self, pct: float, message: str, process: Optional[str] = None, **kwargs: Any) -> None:
+        """Handle postprocessing progress event.
+
+        Translates event data to progress_window.update_values() calls.
+        """
         self.show_progress(pct, message)
+
+        # Wire to ProgressWindow if available
+        if self.app_state and hasattr(self.app_state, 'progress_window') and process:
+            try:
+                self.app_state.progress_window.update_values(
+                    process=process,
+                    status="running" if pct < 100 else "done",
+                    cur_it=int(pct),
+                    tot_it=100,
+                )
+            except (AttributeError, TypeError):
+                pass
 
     def _on_postprocess_error(self, message: str, **kwargs: Any) -> None:
         """Handle postprocessing error event."""
