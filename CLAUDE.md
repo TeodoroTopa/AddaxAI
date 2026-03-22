@@ -598,7 +598,7 @@ on someone else's repository.
 
 ## Phase 6 Progress Tracker
 
-**Current Status:** P0 merged to main (2026-03-22). Steps 8-13 complete (2026-03-22). P2 work (Step 14+) next.
+**Current Status:** P0, P1, P2 complete (2026-03-22). All Phase 6 work (Steps 1-14) done. Phase 6 is now feature-complete.
 
 ### P0 — Pre-merge work — COMPLETE
 
@@ -627,7 +627,7 @@ on someone else's repository.
 |------|------|--------|------|-------|
 | 12 | View protocols (6.6b) | ✅ Done | 2026-03-22 | PR#6 merged, branch deleted |
 | 13 | Rename & extract feature UI (6.6b) | ✅ Done | 2026-03-22 | Commits: 4f1b1e9c, e934d9ca, 0ee91710. All tests pass. |
-| 14 | REST API layer (6.7) | ⏳ Pending | — | Branch: `phase6/rest-api` |
+| 14 | REST API layer (6.7) | ✅ Done | 2026-03-22 | PR#9 merged. Endpoints: GET /models, /results/{folder}, /health |
 
 ---
 
