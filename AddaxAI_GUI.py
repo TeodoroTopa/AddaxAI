@@ -210,6 +210,13 @@ from addaxai.ui.advanced.about_tab import write_about_tab
 from addaxai.ui.simple.simple_window import build_simple_mode, sim_dir_show_info, sim_spp_show_info, sim_mdl_show_info
 from addaxai.core.state import AppState
 from addaxai.core.logging import setup_logging
+from addaxai.core.events import event_bus
+from addaxai.core.event_types import (DEPLOY_STARTED, DEPLOY_PROGRESS, DEPLOY_FINISHED,
+                                       DEPLOY_ERROR, DEPLOY_CANCELLED,
+                                       CLASSIFY_STARTED, CLASSIFY_PROGRESS, CLASSIFY_FINISHED,
+                                       CLASSIFY_ERROR,
+                                       POSTPROCESS_STARTED, POSTPROCESS_PROGRESS,
+                                       POSTPROCESS_FINISHED, POSTPROCESS_ERROR)
 
 import logging
 logger = logging.getLogger("addaxai.gui")
@@ -1222,6 +1229,9 @@ def start_postprocess():
     # log
     logger.debug("EXECUTED: %s", sys._getframe().f_code.co_name)
 
+    # emit event
+    event_bus.emit(POSTPROCESS_STARTED)
+
     # save settings for next time
     write_global_vars(AddaxAI_files, {
         "lang_idx": i18n_lang_idx(),
@@ -1269,11 +1279,13 @@ def start_postprocess():
     if os.path.isfile(os.path.join(src_dir, "video_recognition_file.json")):
         vid_json = True
     if not img_json and not vid_json:
+        event_bus.emit(POSTPROCESS_ERROR, message="No model output found")
         mb.showerror(t('error'), t('msg_no_model_output'))
         return
     
     # check if destination dir is valid and set to input dir if not
     if dst_dir in ["", "/", "\\", ".", "~", ":"] or not os.path.isdir(dst_dir):
+        event_bus.emit(POSTPROCESS_ERROR, message="Destination folder not set or invalid")
         mb.showerror(t('msg_dest_folder_not_set'),
                         ["Destination folder not set.\n\n You have not specified where the post-processing results should be placed or the set "
                         "folder does not exist. This is required.",
@@ -1329,7 +1341,7 @@ def start_postprocess():
         complete_frame(fth_step)
 
         # check if there are postprocessing errors written
-        if os.path.isfile(state.postprocessing_error_log): 
+        if os.path.isfile(state.postprocessing_error_log):
             mb.showwarning(t('warning'), [f"One or more files failed to be analysed by the model (e.g., corrupt files) and will be skipped by "
                                                 f"post-processing features. See\n\n'{state.postprocessing_error_log}'\n\nfor more info.",
                                                 f"Uno o más archivos no han podido ser analizados por el modelo (por ejemplo, ficheros corruptos) y serán "
@@ -1337,18 +1349,24 @@ def start_postprocess():
                                                 "Un ou plusieurs fichiers n'ont pas pu être analysés par le modèle (par exemple, des fichiers corrompus) et seront"
                                                 f"ignorés lors du post-traitement. Voir\n\n'{state.postprocessing_error_log}'\n\npour plus d'info."][i18n_lang_idx()])
 
+        # emit finished event
+        event_bus.emit(POSTPROCESS_FINISHED)
+
         # close progress window
         state.progress_window.close()
-    
+
     except Exception as error:
         # log error
         logger.error("ERROR: %s", error, exc_info=True)
-        
+
+        # emit error event
+        event_bus.emit(POSTPROCESS_ERROR, message=str(error))
+
         # show error
         mb.showerror(title=t('error'),
                      message=t('an_error_occurred') + " (AddaxAI v" + current_AA_version + "): '" + str(error) + "'.",
                      detail=traceback.format_exc())
-        
+
         # close window
         state.progress_window.close()
 
@@ -2592,6 +2610,9 @@ def classify_detections(json_fpath, data_type, simple_mode = False):
     # log
     logger.debug("EXECUTED: %s", sys._getframe().f_code.co_name)
 
+    # emit event
+    event_bus.emit(CLASSIFY_STARTED)
+
     # show user it's loading
     state.progress_window.update_values(process = f"{data_type}_cls", status = "load")
     root.update()
@@ -2711,6 +2732,7 @@ def classify_detections(json_fpath, data_type, simple_mode = False):
 
         # catch early exit if there are no detections that meet the requirmentents to classify
         if line.startswith("n_crops_to_classify is zero. Nothing to classify."):
+            event_bus.emit(CLASSIFY_ERROR, message="No animal detections that meet the criteria")
             mb.showinfo(t('information'), ["There are no animal detections that meet the criteria. You either "
                                                 "have selected images without any animals present, or you have set "
                                                 "your detection confidence threshold to high.", "No hay detecciones"
@@ -2769,6 +2791,7 @@ def classify_detections(json_fpath, data_type, simple_mode = False):
                                             speed = processing_speed,
                                             hware = GPU_param,
                                             cancel_func = lambda: cancel_deployment(p))
+            event_bus.emit(CLASSIFY_PROGRESS, pct=float(percentage), message=f"Classifying: {current_im}/{total_im}")
         root.update()
 
     # process is done
@@ -2776,6 +2799,9 @@ def classify_detections(json_fpath, data_type, simple_mode = False):
                                        status = "done",
                                        time_ela = elapsed_time,
                                        speed = processing_speed)
+
+    # emit finished event
+    event_bus.emit(CLASSIFY_FINISHED, results_path=json_fpath)
 
     root.update()
 
@@ -2791,7 +2817,10 @@ def cancel_deployment(process):
 def deploy_model(path_to_image_folder, selected_options, data_type, simple_mode = False):
     # log
     logger.debug("EXECUTED: %s", sys._getframe().f_code.co_name)
-    
+
+    # emit event
+    event_bus.emit(DEPLOY_STARTED)
+
     # note if user is video analysing without smoothing
     if (var_cls_model.get() != t('none')) and \
         (var_smooth_cls_animal.get() == False) and \
@@ -2964,7 +2993,9 @@ def deploy_model(path_to_image_folder, selected_options, data_type, simple_mode 
 
             # catch model errors
             if line.startswith("No image files found"):
-                mb.showerror(t('msg_no_images_found'),
+                error_msg = t('msg_no_images_found')
+                event_bus.emit(DEPLOY_ERROR, message="No image files found")
+                mb.showerror(error_msg,
                             [f"There are no images found in '{chosen_folder}'. \n\nAre you sure you specified the correct folder?"
                             f" If the files are in subdirectories, make sure you don't tick '{t('lbl_exclude_subs')}'.",
                             f"No se han encontrado imágenes en '{chosen_folder}'. \n\n¿Está seguro de haber especificado la carpeta correcta?"
@@ -2973,23 +3004,26 @@ def deploy_model(path_to_image_folder, selected_options, data_type, simple_mode 
                             f" Si les fichiers sont dans des sous-dossiers, assurez-vous ne pas avoir coché '{t('lbl_exclude_subs')}'."][i18n_lang_idx()])
                 return
             if line.startswith("No videos found"):
+                event_bus.emit(DEPLOY_ERROR, message="No videos found")
                 mb.showerror(t('msg_no_videos_found'),
                             line + [f"\n\nAre you sure you specified the correct folder? If the files are in subdirectories, make sure you don't tick '{t('lbl_exclude_subs')}'.",
                                     f"\n\n¿Está seguro de haber especificado la carpeta correcta? Si los archivos están en subdirectorios, asegúrese de no marcar la casilla '{t('lbl_exclude_subs')}'.",
                                     f"\n\nAvez-vous spécifié le bon dossier? Si les fichiers sont dans des sous-dossiers, assurez-vous ne pas avoir coché '{t('lbl_exclude_subs')}'."][i18n_lang_idx()])
                 return
             if line.startswith("No frames extracted"):
+                event_bus.emit(DEPLOY_ERROR, message="No frames extracted")
                 mb.showerror(t('msg_could_not_extract_frames'),
                             line + ["\n\nConverting the videos to .mp4 might fix the issue.",
                                     "\n\nConvertir los vídeos a .mp4 podría solucionar el problema.",
                                     "\n\nConvertir les vidéos au format .mp4 pourrait régler le problème."][i18n_lang_idx()])
                 return
             if line.startswith("UnicodeEncodeError:"):
+                event_bus.emit(DEPLOY_ERROR, message="UnicodeEncodeError: Unparsable special character in filename")
                 mb.showerror("Unparsable special character",
                             [f"{line}\n\nThere seems to be a special character in a filename that cannot be parsed. Unfortunately, it's not"
                             " possible to point you to the problematic file directly, but I can tell you that the last successfully analysed"
                             f" image was\n\n{previous_processed_img}\n\nThe problematic character should be in the file or folder name of "
-                            "the next image, alphabetically. Please remove any special characters from the path and try again.", 
+                            "the next image, alphabetically. Please remove any special characters from the path and try again.",
                             f"{line}\n\nParece que hay un carácter especial en un nombre de archivo que no se puede analizar. Lamentablemente,"
                             " no es posible indicarle directamente el archivo problemático, pero puedo decirle que la última imagen analizada "
                             f"con éxito fue\n\n{previous_processed_img}\n\nEl carácter problemático debe estar en el nombre del archivo o "
@@ -3024,6 +3058,7 @@ def deploy_model(path_to_image_folder, selected_options, data_type, simple_mode 
                 data_type == "vid":
                 state.progress_window.update_values(process = f"{data_type}_det",
                                             status = "extracting frames")
+                event_bus.emit(DEPLOY_PROGRESS, pct=0.0, message="Extracting frames...")
                 extracting_frames_mode = True
             if extracting_frames_mode:
                 if '%' in line[0:4]:
@@ -3031,6 +3066,7 @@ def deploy_model(path_to_image_folder, selected_options, data_type, simple_mode 
                                                 status = "extracting frames",
                                                 extracting_frames_txt = [f"Extracting frames... {line[:3]}%",
                                                                         f"Extrayendo fotogramas... {line[:3]}%"])
+                    event_bus.emit(DEPLOY_PROGRESS, pct=float(line[:3]), message="Extracting frames...")
             if "Extracted frames for" in line and \
                 data_type == "vid":
                     extracting_frames_mode = False
@@ -3065,6 +3101,7 @@ def deploy_model(path_to_image_folder, selected_options, data_type, simple_mode 
                                                 hware = GPU_param,
                                                 cancel_func = lambda: cancel_deployment(p),
                                                 frame_video_choice = frame_video_choice)
+                event_bus.emit(DEPLOY_PROGRESS, pct=float(percentage), message=f"Processing: {current_im}/{total_im}")
             root.update()
         
         # process is done
@@ -3093,11 +3130,18 @@ def deploy_model(path_to_image_folder, selected_options, data_type, simple_mode 
     
     # classify detections if specified by user
     if not state.cancel_deploy_model_pressed:
+        # emit finished event
+        results_path = os.path.join(chosen_folder, "image_recognition_file.json") if data_type == "img" else os.path.join(chosen_folder, "video_recognition_file.json")
+        event_bus.emit(DEPLOY_FINISHED, results_path=results_path)
+
         if var_cls_model.get() != t('none'):
             if data_type == "img":
                 classify_detections(os.path.join(chosen_folder, "image_recognition_file.json"), data_type, simple_mode = simple_mode)
             else:
                 classify_detections(os.path.join(chosen_folder, "video_recognition_file.json"), data_type, simple_mode = simple_mode)
+    else:
+        # emit cancelled event
+        event_bus.emit(DEPLOY_CANCELLED)
 
 
 
