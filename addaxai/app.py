@@ -196,6 +196,7 @@ from addaxai.ui.dialogs.progress import ProgressWindow
 from addaxai.ui.dialogs.speciesnet_output import SpeciesNetOutputWindow
 from addaxai.ui.deploy_tab import DeployTab
 from addaxai.ui.postprocess_tab import PostprocessTab
+from addaxai.ui.hitl_window import HITLWindow
 from addaxai.ui.advanced.help_tab import HyperlinkManager, write_help_tab
 from addaxai.ui.advanced.about_tab import write_about_tab
 from addaxai.ui.simple.simple_window import build_simple_mode
@@ -8236,6 +8237,9 @@ trd_step.configure(font=(text_font, first_level_frame_font_size, "bold"))
 trd_step.grid(column=1, row=trd_step_row, sticky='nesw')
 trd_step.columnconfigure(0, weight=1, minsize=label_width)
 trd_step.columnconfigure(1, weight=1, minsize=widget_width)
+
+# Instantiate HITLWindow view
+hitl_view = HITLWindow(trd_step, app_state=state)
 
 # human-in-the-loop
 row_hitl_main = 0
