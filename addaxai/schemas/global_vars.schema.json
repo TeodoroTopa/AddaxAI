@@ -1,0 +1,210 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AddaxAI Global Variables Schema",
+  "description": "Configuration schema for AddaxAI application settings (global_vars.json)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "lang_idx",
+    "advanced_mode",
+    "var_det_model_idx",
+    "var_cls_model_idx",
+    "var_det_model_path",
+    "var_det_model_short",
+    "var_exclude_subs",
+    "var_use_custom_img_size_for_deploy",
+    "var_image_size_for_deploy",
+    "var_abs_paths",
+    "var_disable_GPU",
+    "var_process_img",
+    "var_use_checkpnts",
+    "var_checkpoint_freq",
+    "var_cont_checkpnt",
+    "var_process_vid",
+    "var_not_all_frames",
+    "var_nth_frame",
+    "var_separate_files",
+    "var_file_placement",
+    "var_sep_conf",
+    "var_vis_files",
+    "var_vis_size_idx",
+    "var_vis_bbox",
+    "var_vis_blur",
+    "var_crp_files",
+    "var_exp",
+    "var_plt",
+    "var_exp_format_idx",
+    "var_thresh",
+    "var_thresh_default",
+    "var_scale_warning_shown",
+    "var_sppnet_location_idx",
+    "speciesnet_warning_shown",
+    "var_hitl_file_order",
+    "var_keep_series",
+    "var_keep_series_species",
+    "var_keep_series_seconds"
+  ],
+  "properties": {
+    "lang_idx": {
+      "type": "integer",
+      "description": "Language index: 0=English, 1=Spanish, 2=French",
+      "minimum": 0,
+      "maximum": 2
+    },
+    "advanced_mode": {
+      "type": "boolean",
+      "description": "Whether to show advanced mode UI"
+    },
+    "var_det_model_idx": {
+      "type": "integer",
+      "description": "Index of selected detection model"
+    },
+    "var_cls_model_idx": {
+      "type": "integer",
+      "description": "Index of selected classification model"
+    },
+    "var_det_model_path": {
+      "type": "string",
+      "description": "Path to the detection model file"
+    },
+    "var_det_model_short": {
+      "type": "string",
+      "description": "Short name/version of detection model"
+    },
+    "var_exclude_subs": {
+      "type": "boolean",
+      "description": "Whether to exclude subdirectories"
+    },
+    "var_use_custom_img_size_for_deploy": {
+      "type": "boolean",
+      "description": "Whether to use custom image size for detection"
+    },
+    "var_image_size_for_deploy": {
+      "type": "string",
+      "description": "Custom image size value"
+    },
+    "var_abs_paths": {
+      "type": "boolean",
+      "description": "Whether to use absolute paths in output"
+    },
+    "var_disable_GPU": {
+      "type": "boolean",
+      "description": "Whether to disable GPU"
+    },
+    "var_process_img": {
+      "type": "boolean",
+      "description": "Whether to process image files"
+    },
+    "var_use_checkpnts": {
+      "type": "boolean",
+      "description": "Whether to use checkpoints during processing"
+    },
+    "var_checkpoint_freq": {
+      "type": "string",
+      "description": "Checkpoint frequency value"
+    },
+    "var_cont_checkpnt": {
+      "type": "boolean",
+      "description": "Whether to continue from checkpoint"
+    },
+    "var_process_vid": {
+      "type": "boolean",
+      "description": "Whether to process video files"
+    },
+    "var_not_all_frames": {
+      "type": "boolean",
+      "description": "Whether to skip some video frames"
+    },
+    "var_nth_frame": {
+      "type": "string",
+      "description": "Process every nth frame of video"
+    },
+    "var_separate_files": {
+      "type": "boolean",
+      "description": "Whether to separate files by detection type"
+    },
+    "var_file_placement": {
+      "type": "integer",
+      "description": "File placement strategy index"
+    },
+    "var_sep_conf": {
+      "type": "boolean",
+      "description": "Whether to separate files by confidence threshold"
+    },
+    "var_vis_files": {
+      "type": "boolean",
+      "description": "Whether to create visualization files"
+    },
+    "var_vis_size_idx": {
+      "type": "integer",
+      "description": "Visualization size index"
+    },
+    "var_vis_bbox": {
+      "type": "boolean",
+      "description": "Whether to visualize bounding boxes"
+    },
+    "var_vis_blur": {
+      "type": "boolean",
+      "description": "Whether to blur sensitive detections"
+    },
+    "var_crp_files": {
+      "type": "boolean",
+      "description": "Whether to create cropped files"
+    },
+    "var_exp": {
+      "type": "boolean",
+      "description": "Whether to export results"
+    },
+    "var_plt": {
+      "type": "boolean",
+      "description": "Whether to generate plots"
+    },
+    "var_exp_format_idx": {
+      "type": "integer",
+      "description": "Export format index"
+    },
+    "var_thresh": {
+      "type": "number",
+      "description": "Detection confidence threshold (0.0-1.0)",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "var_thresh_default": {
+      "type": "number",
+      "description": "Default detection confidence threshold",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "var_scale_warning_shown": {
+      "type": "boolean",
+      "description": "Whether scale warning has been shown"
+    },
+    "var_sppnet_location_idx": {
+      "type": "integer",
+      "description": "SpeciesNet location index"
+    },
+    "speciesnet_warning_shown": {
+      "type": "boolean",
+      "description": "Whether SpeciesNet warning has been shown"
+    },
+    "var_hitl_file_order": {
+      "type": "integer",
+      "description": "HITL file order strategy"
+    },
+    "var_keep_series": {
+      "type": "boolean",
+      "description": "Whether to keep image series"
+    },
+    "var_keep_series_species": {
+      "type": "array",
+      "description": "List of species to keep as series",
+      "items": {
+        "type": "string"
+      }
+    },
+    "var_keep_series_seconds": {
+      "type": "number",
+      "description": "Time window in seconds for keeping series"
+    }
+  }
+}

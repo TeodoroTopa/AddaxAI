@@ -1,0 +1,41 @@
+{
+  "images": [
+    {
+      "file": "IMG_001.JPG",
+      "detections": [
+        {
+          "category": "1",
+          "conf": 0.95,
+          "bbox": [0.1, 0.2, 0.5, 0.6],
+          "classifications": [
+            ["zebra", 0.87],
+            ["wildebeest", 0.08]
+          ]
+        }
+      ]
+    },
+    {
+      "file": "IMG_002.JPG",
+      "detections": []
+    },
+    {
+      "file": "IMG_003.JPG",
+      "detections": [
+        {
+          "category": "2",
+          "conf": 0.88,
+          "bbox": [0.3, 0.1, 0.7, 0.8]
+        }
+      ]
+    }
+  ],
+  "detection_categories": {
+    "1": "animal",
+    "2": "person",
+    "3": "vehicle"
+  },
+  "info": {
+    "detector": "MegaDetector v5.0",
+    "detection_completion_time": "2026-03-22T10:30:00Z"
+  }
+}

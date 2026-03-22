@@ -1,0 +1,110 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AddaxAI Recognition Output Schema",
+  "description": "Schema for object detection and classification output JSON files",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["images", "detection_categories"],
+  "properties": {
+    "images": {
+      "type": "array",
+      "description": "Array of detection results for each image",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "detections"],
+        "properties": {
+          "file": {
+            "type": "string",
+            "description": "Image filename or path"
+          },
+          "detections": {
+            "type": "array",
+            "description": "Array of object detections in this image",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["category", "conf", "bbox"],
+              "properties": {
+                "category": {
+                  "type": "string",
+                  "description": "Detection category ID (key in detection_categories)"
+                },
+                "conf": {
+                  "type": "number",
+                  "description": "Detection confidence score (0.0-1.0)",
+                  "minimum": 0.0,
+                  "maximum": 1.0
+                },
+                "bbox": {
+                  "type": "array",
+                  "description": "Bounding box [x_min, y_min, x_max, y_max] (normalized 0-1 or pixel coords)",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 4,
+                  "maxItems": 4
+                },
+                "classifications": {
+                  "type": "array",
+                  "description": "Optional species classifications for this detection",
+                  "items": {
+                    "type": "array",
+                    "description": "[species_name, confidence]",
+                    "items": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "number",
+                        "minimum": 0.0,
+                        "maximum": 1.0
+                      }
+                    ],
+                    "minItems": 2,
+                    "maxItems": 2
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "detection_categories": {
+      "type": "object",
+      "description": "Mapping of category IDs to category names",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "examples": {
+        "1": "animal",
+        "2": "person",
+        "3": "vehicle"
+      }
+    },
+    "classifier": {
+      "type": "string",
+      "description": "Optional name of the classifier used for classifications"
+    },
+    "info": {
+      "type": "object",
+      "description": "Optional metadata about the recognition run",
+      "additionalProperties": true,
+      "properties": {
+        "detector": {
+          "type": "string",
+          "description": "Name and version of detector model"
+        },
+        "detection_completion_time": {
+          "type": "string",
+          "description": "ISO format timestamp of when detection completed"
+        },
+        "classification_completion_time": {
+          "type": "string",
+          "description": "ISO format timestamp of when classification completed"
+        }
+      }
+    }
+  }
+}

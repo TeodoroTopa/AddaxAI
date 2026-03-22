@@ -1,0 +1,22 @@
+{
+  "images": [
+    {
+      "file": "IMG_001.JPG",
+      "detections": [
+        {
+          "category": "1",
+          "conf": "invalid_string",
+          "bbox": [0.1, 0.2, 0.5]
+        }
+      ]
+    },
+    {
+      "file": "IMG_002.JPG",
+      "detections": "not_an_array"
+    }
+  ],
+  "detection_categories": {
+    "1": 123,
+    "2": "person"
+  }
+}
