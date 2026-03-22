@@ -14,11 +14,9 @@ except ImportError:
 
 from addaxai.core.events import event_bus
 from addaxai.core.event_types import (
-    DEPLOY_STARTED,
     DEPLOY_PROGRESS,
     DEPLOY_FINISHED,
     DEPLOY_ERROR,
-    DEPLOY_CANCELLED,
 )
 from addaxai.i18n import t
 

@@ -69,7 +69,7 @@ import folium
 import argparse
 import calendar
 import platform
-import requests
+import requests  # type: ignore[import-untyped]
 import tempfile
 import datetime
 import traceback
@@ -92,7 +92,7 @@ from CTkTable import CTkTable
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import xml.etree.cElementTree as ET
-from PIL import ImageTk, Image, ImageFile
+from PIL import ImageTk, Image, ImageFile  # type: ignore[assignment]
 from RangeSlider.RangeSlider import RangeSliderH
 from tkinter import filedialog, ttk, messagebox as mb
 from folium.plugins import HeatMap, Draw, MarkerCluster
@@ -156,10 +156,10 @@ for path in paths_to_add:
 PYTHONPATH_separator = ":" if platform.system() != "Windows" else ";"
 os.environ["PYTHONPATH"] = os.environ.get("PYTHONPATH", "") + PYTHONPATH_separator + PYTHONPATH_separator.join(paths_to_add)
 
-# import modules from forked repositories
-from visualise_detection.bounding_box import bounding_box as bb
-from cameratraps.megadetector.detection.video_utils import frame_results_to_video_results, FrameToVideoOptions, VIDEO_EXTENSIONS
-from cameratraps.megadetector.utils.path_utils import IMG_EXTENSIONS
+# import modules from forked repositories (must follow sys.path setup above)
+from visualise_detection.bounding_box import bounding_box as bb  # noqa: E402
+from cameratraps.megadetector.detection.video_utils import frame_results_to_video_results, FrameToVideoOptions, VIDEO_EXTENSIONS  # noqa: E402
+from cameratraps.megadetector.utils.path_utils import IMG_EXTENSIONS  # noqa: E402
 
 # import extracted modules (Phase 1 wiring)
 from addaxai.utils.files import (is_valid_float, get_size, shorten_path, natural_sort_key,
@@ -7887,10 +7887,10 @@ adv_spacer_bottom = customtkinter.CTkFrame(advanc_main_frame, height=PADY, fg_co
 adv_spacer_bottom.grid(column=0, row=5, columnspan=2, sticky='ew')
 
 # prepare check mark for later use
-state.check_mark_one_row = PIL_checkmark.resize((20, 20), Image.Resampling.LANCZOS)
-state.check_mark_one_row = ImageTk.PhotoImage(state.check_mark_one_row)
-state.check_mark_two_rows = PIL_checkmark.resize((45, 45), Image.Resampling.LANCZOS)
-state.check_mark_two_rows = ImageTk.PhotoImage(state.check_mark_two_rows)
+state.check_mark_one_row = PIL_checkmark.resize((20, 20), Image.Resampling.LANCZOS)  # type: ignore[assignment, attr-defined]
+state.check_mark_one_row = ImageTk.PhotoImage(state.check_mark_one_row)  # type: ignore[assignment, arg-type]
+state.check_mark_two_rows = PIL_checkmark.resize((45, 45), Image.Resampling.LANCZOS)  # type: ignore[assignment, attr-defined]
+state.check_mark_two_rows = ImageTk.PhotoImage(state.check_mark_two_rows)  # type: ignore[assignment, arg-type]
 
 # grey top buttons
 adv_btn_switch_mode = GreyTopButton(master = advanc_main_frame, text = t('adv_btn_switch_mode'), command = switch_mode, yellow_secondary=yellow_secondary, yellow_tertiary=yellow_tertiary, border_width=GREY_BUTTON_BORDER_WIDTH)
@@ -7905,7 +7905,7 @@ adv_btn_reset_values.grid(row=0, column=0, padx=PADX, pady=(0, 0), columnspan = 
 # about
 adv_abo_lbl = tk.Label(advanc_main_frame, text=t('adv_abo_lbl'), font = Font(size = ADDAX_TXT_SIZE), fg="black", bg = yellow_primary)
 adv_abo_lbl.grid(row=6, column=0, columnspan = 2, sticky="")
-adv_abo_lbl_link = tk.Label(advanc_main_frame, text="addaxdatascience.com", cursor="hand2", font = Font(size = ADDAX_TXT_SIZE, underline=1), fg=green_primary, bg =yellow_primary)
+adv_abo_lbl_link = tk.Label(advanc_main_frame, text="addaxdatascience.com", cursor="hand2", font = Font(size = ADDAX_TXT_SIZE, underline=1), fg=green_primary, bg =yellow_primary)  # type: ignore[arg-type]
 adv_abo_lbl_link.grid(row=7, column=0, columnspan = 2, sticky="", pady=(0, PADY))
 adv_abo_lbl_link.bind("<Button-1>", lambda e: callback("http://addaxdatascience.com"))
 
@@ -7937,7 +7937,7 @@ tabControl.grid(column=0, row=2, sticky="ns", pady = 0)
 #### deploy tab
 ### first step
 row_fst_step = 1
-fst_step = LabelFrame(deploy_scrollable_frame, text=" " + t('fst_step') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, fg=green_primary, borderwidth=2)
+fst_step = LabelFrame(deploy_scrollable_frame, text=" " + t('fst_step') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, fg=green_primary, borderwidth=2)  # type: ignore[arg-type]
 fst_step.configure(font=(text_font, first_level_frame_font_size, "bold"))
 fst_step.grid(column=0, row=row_fst_step, columnspan=1, sticky='ew')
 fst_step.columnconfigure(0, weight=1, minsize=label_width)
@@ -7954,7 +7954,7 @@ btn_choose_folder.grid(row=row_choose_folder, column=1, sticky='nesw', padx=5)
 
 ### second step
 row_snd_step = 2
-snd_step = LabelFrame(deploy_scrollable_frame, text=" " + t('snd_step') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, fg=green_primary, borderwidth=2)
+snd_step = LabelFrame(deploy_scrollable_frame, text=" " + t('snd_step') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, fg=green_primary, borderwidth=2)  # type: ignore[arg-type]
 snd_step.configure(font=(text_font, first_level_frame_font_size, "bold"))
 snd_step.grid(column=0, row=row_snd_step, sticky='nesw')
 snd_step.columnconfigure(0, weight=1, minsize=label_width)
@@ -7963,7 +7963,7 @@ snd_step.columnconfigure(1, weight=1, minsize=widget_width)
 # check which detectors are installed
 det_models = fetch_known_models(DET_DIR)
 dpd_options_model = [det_models + ["Custom model"], det_models + ["Otro modelo"], det_models + ["Modèle personnalisé"]]
-state.dpd_options_model = dpd_options_model
+state.dpd_options_model = dpd_options_model  # type: ignore[assignment]
 
 # choose detector
 row_model = 0
@@ -7982,7 +7982,7 @@ if var_det_model_short.get() != "":
 # check if user has classifiers installed
 cls_models = fetch_known_models(CLS_DIR)
 dpd_options_cls_model = [["None"] + cls_models, ["Ninguno"] + cls_models, ["Aucun"] + cls_models]
-state.dpd_options_cls_model = dpd_options_cls_model
+state.dpd_options_cls_model = dpd_options_cls_model  # type: ignore[assignment]
 
 # use classifier
 row_cls_model = 1
@@ -7998,7 +7998,7 @@ model_vars = load_model_vars()
 
 ## classification option frame (hidden by default)
 cls_frame_row = 2
-cls_frame = LabelFrame(snd_step, text=" ↳ " + t('cls_frame') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, borderwidth=1, fg="black")
+cls_frame = LabelFrame(snd_step, text=" ↳ " + t('cls_frame') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, borderwidth=1, fg="black")  # type: ignore[arg-type]
 cls_frame.configure(font=(text_font, second_level_frame_font_size, "bold"))
 cls_frame.grid(row=cls_frame_row, column=0, columnspan=2, sticky = 'ew')
 cls_frame.columnconfigure(0, weight=1, minsize= label_width - subframe_correction_factor)
@@ -8032,7 +8032,7 @@ lbl_cls_detec_thresh = Label(cls_frame, text="     " + t('lbl_cls_detec_thresh')
 lbl_cls_detec_thresh.grid(row=row_cls_detec_thresh, sticky='nesw', pady=2)
 var_cls_detec_thresh.set(model_vars.get('var_cls_detec_thresh', 0.6))
 scl_cls_detec_thresh = Scale(cls_frame, from_=0.01, to=1, resolution=0.01, orient=HORIZONTAL,
-                             variable=var_cls_detec_thresh, showvalue=0, width=10, length=1, state=DISABLED,
+                             variable=var_cls_detec_thresh, showvalue=0, width=10, length=1, state=DISABLED,  # type: ignore[arg-type]
                              command=lambda value: write_model_vars(new_values = {"var_cls_detec_thresh": str(value)}))
 scl_cls_detec_thresh.grid(row=row_cls_detec_thresh, column=1, sticky='ew', padx=10)
 dsp_cls_detec_thresh = Label(cls_frame, textvariable=var_cls_detec_thresh)
@@ -8045,7 +8045,7 @@ lbl_cls_class_thresh = Label(cls_frame, text="     " + t('lbl_cls_class_thresh')
 lbl_cls_class_thresh.grid(row=row_cls_class_thresh, sticky='nesw', pady=2)
 var_cls_class_thresh.set(model_vars.get('var_cls_class_thresh', 0.5))
 scl_cls_class_thresh = Scale(cls_frame, from_=0.01, to=1, resolution=0.01, orient=HORIZONTAL,
-                             variable=var_cls_class_thresh, showvalue=0, width=10, length=1, state=DISABLED,
+                             variable=var_cls_class_thresh, showvalue=0, width=10, length=1, state=DISABLED,  # type: ignore[arg-type]
                              command=lambda value: write_model_vars(new_values = {"var_cls_class_thresh": value}))
 scl_cls_class_thresh.grid(row=row_cls_class_thresh, column=1, sticky='ew', padx=10)
 dsp_cls_class_thresh = Label(cls_frame, textvariable=var_cls_class_thresh)
@@ -8070,7 +8070,7 @@ chb_tax_fallback = Checkbutton(cls_frame, variable=var_tax_fallback, anchor="w",
 row_tax_levels = 6
 lbl_tax_levels = Label(cls_frame, text="     " + t('lbl_tax_levels'), width=1, anchor="w")
 var_tax_levels.set('dummy') # set dummy value to avoid error
-dpd_tax_levels = OptionMenu(cls_frame, var_tax_levels, ["dummy"])
+dpd_tax_levels = OptionMenu(cls_frame, var_tax_levels, ["dummy"])  # type: ignore[arg-type]
 dpd_tax_levels.configure(width=1, state=DISABLED)
 
 # make taxonomic fallback widgets visible if taxon mapping is present
@@ -8143,7 +8143,7 @@ chb_process_img.grid(row=row_process_img, column=1, sticky='nesw', padx=5)
 
 ## image option frame (hidden by default)
 img_frame_row = 9
-img_frame = LabelFrame(snd_step, text=" ↳ " + t('img_frame') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, borderwidth=1, fg="grey80")
+img_frame = LabelFrame(snd_step, text=" ↳ " + t('img_frame') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, borderwidth=1, fg="grey80")  # type: ignore[arg-type]
 img_frame.configure(font=(text_font, second_level_frame_font_size, "bold"))
 img_frame.grid(row=img_frame_row, column=0, columnspan=2, sticky = 'ew')
 img_frame.columnconfigure(0, weight=1, minsize=label_width - subframe_correction_factor)
@@ -8190,7 +8190,7 @@ chb_process_vid.grid(row=row_process_vid, column=1, sticky='nesw', padx=5)
 
 ## video option frame (disabled by default)
 vid_frame_row = 11
-vid_frame = LabelFrame(snd_step, text=" ↳ " + t('vid_frame') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, borderwidth=1, fg="grey80")
+vid_frame = LabelFrame(snd_step, text=" ↳ " + t('vid_frame') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, borderwidth=1, fg="grey80")  # type: ignore[arg-type]
 vid_frame.configure(font=(text_font, second_level_frame_font_size, "bold"))
 vid_frame.grid(row=vid_frame_row, column=0, columnspan=2, sticky='ew')
 vid_frame.columnconfigure(0, weight=1, minsize=label_width - subframe_correction_factor)
@@ -8232,7 +8232,7 @@ deploy_view.set_button_ref(btn_start_deploy)
 
 ### human-in-the-loop step
 trd_step_row = 1
-trd_step = LabelFrame(deploy_scrollable_frame, text=" " + t('trd_step') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, fg=green_primary, borderwidth=2)
+trd_step = LabelFrame(deploy_scrollable_frame, text=" " + t('trd_step') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, fg=green_primary, borderwidth=2)  # type: ignore[arg-type]
 trd_step.configure(font=(text_font, first_level_frame_font_size, "bold"))
 trd_step.grid(column=1, row=trd_step_row, sticky='nesw')
 trd_step.columnconfigure(0, weight=1, minsize=label_width)
@@ -8250,7 +8250,7 @@ btn_hitl_main.grid(row=row_hitl_main, column=1, sticky='nesw', padx=5)
 
 ### fourth step
 fth_step_row = 2
-fth_step = LabelFrame(deploy_scrollable_frame, text=" " + t('fth_step') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, fg=green_primary, borderwidth=2)
+fth_step = LabelFrame(deploy_scrollable_frame, text=" " + t('fth_step') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, fg=green_primary, borderwidth=2)  # type: ignore[arg-type]
 fth_step.configure(font=(text_font, first_level_frame_font_size, "bold"))
 fth_step.grid(column=1, row=fth_step_row, sticky='nesw')
 fth_step.columnconfigure(0, weight=1, minsize=label_width)
@@ -8278,7 +8278,7 @@ chb_separate_files.grid(row=row_separate_files, column=1, sticky='nesw', padx=5)
 
 ## separation frame
 sep_frame_row = 2
-sep_frame = LabelFrame(fth_step, text=" ↳ " + t('sep_frame') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, borderwidth=1, fg="grey80")
+sep_frame = LabelFrame(fth_step, text=" ↳ " + t('sep_frame') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, borderwidth=1, fg="grey80")  # type: ignore[arg-type]
 sep_frame.configure(font=(text_font, second_level_frame_font_size, "bold"))
 sep_frame.grid(row=sep_frame_row, column=0, columnspan=2, sticky = 'ew')
 sep_frame.columnconfigure(0, weight=1, minsize=label_width - subframe_correction_factor)
@@ -8314,7 +8314,7 @@ chb_keep_series.grid(row=row_keep_series, column=1, sticky='nesw', padx=5)
 
 ## keep_series frame (nested under separation options)
 keep_series_frame_row = 3
-keep_series_frame = LabelFrame(sep_frame, text="        ↳ " + t('keep_series_frame') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, borderwidth=1, fg="grey80")
+keep_series_frame = LabelFrame(sep_frame, text="        ↳ " + t('keep_series_frame') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, borderwidth=1, fg="grey80")  # type: ignore[arg-type]
 keep_series_frame.configure(font=(text_font, second_level_frame_font_size, "bold"))
 keep_series_frame.grid(row=keep_series_frame_row, column=0, columnspan=2, sticky = 'ew')
 keep_series_frame.columnconfigure(0, weight=1, minsize=label_width - subframe_correction_factor)
@@ -8326,7 +8326,7 @@ row_keep_series_seconds = 0
 lbl_keep_series_seconds = Label(keep_series_frame, text="     " + t('lbl_keep_series_seconds'), width=1, anchor="w")
 lbl_keep_series_seconds.grid(row=row_keep_series_seconds, sticky='nesw', pady=2)
 var_keep_series_seconds.set(global_vars['var_keep_series_seconds'])
-chb_keep_series_seconds = Scale(keep_series_frame, from_=0.1, to=10, resolution=0.1, orient=HORIZONTAL, variable=var_keep_series_seconds, showvalue=0, width=10, length=1)
+chb_keep_series_seconds = Scale(keep_series_frame, from_=0.1, to=10, resolution=0.1, orient=HORIZONTAL, variable=var_keep_series_seconds, showvalue=0, width=10, length=1)  # type: ignore[arg-type]
 chb_keep_series_seconds.grid(row=row_keep_series_seconds, column=1, sticky='ew', padx=10)
 dsp_keep_series_seconds = Label(keep_series_frame, textvariable=var_keep_series_seconds)
 dsp_keep_series_seconds.configure(fg=green_primary)
@@ -8359,7 +8359,7 @@ chb_vis_files.grid(row=row_vis_files, column=1, sticky='nesw', padx=5)
 
 ## visualization options
 vis_frame_row = 4
-vis_frame = LabelFrame(fth_step, text=" ↳ " + t('vis_frame') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, borderwidth=1, fg="grey80")
+vis_frame = LabelFrame(fth_step, text=" ↳ " + t('vis_frame') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, borderwidth=1, fg="grey80")  # type: ignore[arg-type]
 vis_frame.configure(font=(text_font, second_level_frame_font_size, "bold"))
 vis_frame.grid(row=vis_frame_row, column=0, columnspan=2, sticky = 'ew')
 vis_frame.columnconfigure(0, weight=1, minsize=label_width - subframe_correction_factor)
@@ -8417,7 +8417,7 @@ chb_exp.grid(row=row_exp, column=1, sticky='nesw', padx=5)
 
 ## exportation options
 exp_frame_row = 8
-exp_frame = LabelFrame(fth_step, text=" ↳ " + t('exp_frame') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, borderwidth=1, fg="grey80")
+exp_frame = LabelFrame(fth_step, text=" ↳ " + t('exp_frame') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, borderwidth=1, fg="grey80")  # type: ignore[arg-type]
 exp_frame.configure(font=(text_font, second_level_frame_font_size, "bold"))
 exp_frame.grid(row=exp_frame_row, column=0, columnspan=2, sticky = 'ew')
 exp_frame.columnconfigure(0, weight=1, minsize=label_width - subframe_correction_factor)
@@ -8438,7 +8438,7 @@ row_lbl_thresh = 9
 lbl_thresh = Label(fth_step, text=t('lbl_thresh'), width=1, anchor="w")
 lbl_thresh.grid(row=row_lbl_thresh, sticky='nesw', pady=2)
 var_thresh.set(global_vars['var_thresh'])
-scl_thresh = Scale(fth_step, from_=0.01, to=1, resolution=0.01, orient=HORIZONTAL, variable=var_thresh, showvalue=0, width=10, length=1)
+scl_thresh = Scale(fth_step, from_=0.01, to=1, resolution=0.01, orient=HORIZONTAL, variable=var_thresh, showvalue=0, width=10, length=1)  # type: ignore[arg-type]
 scl_thresh.grid(row=row_lbl_thresh, column=1, sticky='ew', padx=10)
 dsp_thresh = Label(fth_step, textvariable=var_thresh)
 dsp_thresh.configure(fg=green_primary)
@@ -8522,12 +8522,12 @@ _sim = build_simple_mode(
     pil_spp_image=PIL_spp_image, pil_run_image=PIL_run_image,
     on_toplevel_close=on_toplevel_close, switch_mode=switch_mode,
     set_language=set_language, sponsor_project=sponsor_project,
-    reset_values=reset_values, browse_dir_func=browse_dir,
+    reset_values=reset_values, browse_dir_func=browse_dir,  # type: ignore[arg-type]
     update_frame_states=update_frame_states,
-    start_deploy_func=start_deploy, sim_mdl_dpd_callback=sim_mdl_dpd_callback,
+    start_deploy_func=start_deploy, sim_mdl_dpd_callback=sim_mdl_dpd_callback,  # type: ignore[arg-type]
     var_choose_folder=var_choose_folder, var_choose_folder_short=var_choose_folder_short,
-    dsp_choose_folder=dsp_choose_folder, row_choose_folder=row_choose_folder,
-    dpd_options_cls_model=dpd_options_cls_model, suffixes_for_sim_none=suffixes_for_sim_none,
+    dsp_choose_folder=dsp_choose_folder, row_choose_folder=row_choose_folder,  # type: ignore[arg-type]
+    dpd_options_cls_model=dpd_options_cls_model, suffixes_for_sim_none=suffixes_for_sim_none,  # type: ignore[arg-type]
     global_vars=global_vars, var_cls_model=var_cls_model,
     show_model_info_func=show_model_info,
     yellow_secondary=yellow_secondary, yellow_tertiary=yellow_tertiary,
