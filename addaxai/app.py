@@ -248,8 +248,8 @@ def postprocess(src_dir, dst_dir, thresh, sep, keep_series, keep_series_seconds,
     # log
     logger.debug("EXECUTED: %s", sys._getframe().f_code.co_name)
 
-    # update progress window
-    state.progress_window.update_values(process = f"{data_type}_pst", status = "load")
+    # update progress window via event bus
+    event_bus.emit(POSTPROCESS_PROGRESS, pct=0.0, message="Initializing postprocessing", process=f"{data_type}_pst")
 
     # plt needs csv files so make sure to produce them, even if the user didn't specify
     # if the user didn't specify to export to csv, make sure to remove them later on
@@ -397,13 +397,8 @@ def postprocess(src_dir, dst_dir, thresh, sep, keep_series, keep_series_seconds,
             # calculate stats
             elapsed_time_sep = str(datetime.timedelta(seconds=round(time.time() - start_time)))
             time_left_sep = str(datetime.timedelta(seconds=round(((time.time() - start_time) * n_images / nloop) - (time.time() - start_time))))
-            state.progress_window.update_values(process = f"{data_type}_pst",
-                                            status = "running",
-                                            cur_it = nloop,
-                                            tot_it = n_images,
-                                            time_ela = elapsed_time_sep,
-                                            time_rem = time_left_sep,
-                                            cancel_func = cancel)
+            percentage = (nloop / n_images) * 100
+            event_bus.emit(POSTPROCESS_PROGRESS, pct=float(percentage), message=f"Processing: {nloop}/{n_images}", process=f"{data_type}_pst")
 
             nloop += 1
             root.update()
@@ -439,13 +434,8 @@ def postprocess(src_dir, dst_dir, thresh, sep, keep_series, keep_series_seconds,
                     f.close()
                     elapsed_time_sep = str(datetime.timedelta(seconds=round(time.time() - start_time)))
                     time_left_sep = str(datetime.timedelta(seconds=round(((time.time() - start_time) * n_images / nloop) - (time.time() - start_time))))
-                    state.progress_window.update_values(process = f"{data_type}_pst",
-                                                    status = "running",
-                                                    cur_it = nloop,
-                                                    tot_it = n_images,
-                                                    time_ela = elapsed_time_sep,
-                                                    time_rem = time_left_sep,
-                                                    cancel_func = cancel)
+                    percentage = (nloop / n_images) * 100
+                    event_bus.emit(POSTPROCESS_PROGRESS, pct=float(percentage), message=f"Processing: {nloop}/{n_images}", process=f"{data_type}_pst")
                     nloop += 1
                     root.update()
                     continue
@@ -712,16 +702,11 @@ def postprocess(src_dir, dst_dir, thresh, sep, keep_series, keep_series_seconds,
                     image_new.save(im_path, exif=exif)
                     image_new.close()
 
-        # calculate stats
+        # calculate stats and emit progress via event bus
         elapsed_time_sep = str(datetime.timedelta(seconds=round(time.time() - start_time)))
         time_left_sep = str(datetime.timedelta(seconds=round(((time.time() - start_time) * n_images / nloop) - (time.time() - start_time))))
-        state.progress_window.update_values(process = f"{data_type}_pst",
-                                        status = "running",
-                                        cur_it = nloop,
-                                        tot_it = n_images,
-                                        time_ela = elapsed_time_sep,
-                                        time_rem = time_left_sep,
-                                        cancel_func = cancel)
+        percentage = (nloop / n_images) * 100
+        event_bus.emit(POSTPROCESS_PROGRESS, pct=float(percentage), message=f"Processing: {nloop}/{n_images}", process=f"{data_type}_pst")
 
         nloop += 1
         root.update()
@@ -839,8 +824,8 @@ def postprocess(src_dir, dst_dir, thresh, sep, keep_series, keep_series_seconds,
     if json_paths_converted:
         make_json_absolute(recognition_file, var_choose_folder.get())
 
-    # let the user know it's done
-    state.progress_window.update_values(process = f"{data_type}_pst", status = "done")
+    # let the user know it's done via event bus
+    event_bus.emit(POSTPROCESS_PROGRESS, pct=100.0, message="Postprocessing complete", process=f"{data_type}_pst")
     root.update()
 
     # create graphs
@@ -2603,11 +2588,11 @@ def classify_detections(json_fpath, data_type, simple_mode = False):
     logger.debug("EXECUTED: %s", sys._getframe().f_code.co_name)
 
     # emit event
-    event_bus.emit(CLASSIFY_STARTED)
+    event_bus.emit(CLASSIFY_STARTED, process=f"{data_type}_cls")
 
-    # show user it's loading
-    state.progress_window.update_values(process = f"{data_type}_cls", status = "load")
+    # show user it's loading via event bus
     root.update()
+    event_bus.emit(CLASSIFY_PROGRESS, pct=0.0, message="Loading classification model", process=f"{data_type}_cls")
 
     # load model specific variables
     model_vars = load_model_vars()
@@ -2724,7 +2709,7 @@ def classify_detections(json_fpath, data_type, simple_mode = False):
 
         # catch early exit if there are no detections that meet the requirmentents to classify
         if line.startswith("n_crops_to_classify is zero. Nothing to classify."):
-            event_bus.emit(CLASSIFY_ERROR, message="No animal detections that meet the criteria")
+            event_bus.emit(CLASSIFY_ERROR, message="No animal detections that meet the criteria", process=f"{data_type}_cls")
             mb.showinfo(t('information'), ["There are no animal detections that meet the criteria. You either "
                                                 "have selected images without any animals present, or you have set "
                                                 "your detection confidence threshold to high.", "No hay detecciones"
@@ -2773,27 +2758,13 @@ def classify_detections(json_fpath, data_type, simple_mode = False):
             time_left = re.search("(?<=<)(.*)(?=,)", times)[1]
             processing_speed = re.search("(?<=,)(.*)(?=])", times)[1].strip()
 
-            # print stats
-            state.progress_window.update_values(process = f"{data_type}_cls",
-                                            status = status_setting,
-                                            cur_it = int(current_im),
-                                            tot_it = int(total_im),
-                                            time_ela = elapsed_time,
-                                            time_rem = time_left,
-                                            speed = processing_speed,
-                                            hware = GPU_param,
-                                            cancel_func = lambda: cancel_deployment(p))
-            event_bus.emit(CLASSIFY_PROGRESS, pct=float(percentage), message=f"Classifying: {current_im}/{total_im}")
+            # print stats via event bus
+            event_bus.emit(CLASSIFY_PROGRESS, pct=float(percentage), message=f"Classifying: {current_im}/{total_im}", process=f"{data_type}_cls")
         root.update()
 
-    # process is done
-    state.progress_window.update_values(process = f"{data_type}_cls",
-                                       status = "done",
-                                       time_ela = elapsed_time,
-                                       speed = processing_speed)
-
+    # process is done via event bus
     # emit finished event
-    event_bus.emit(CLASSIFY_FINISHED, results_path=json_fpath)
+    event_bus.emit(CLASSIFY_FINISHED, results_path=json_fpath, process=f"{data_type}_cls")
 
     root.update()
 
@@ -2811,7 +2782,7 @@ def deploy_model(path_to_image_folder, selected_options, data_type, simple_mode 
     logger.debug("EXECUTED: %s", sys._getframe().f_code.co_name)
 
     # emit event
-    event_bus.emit(DEPLOY_STARTED)
+    event_bus.emit(DEPLOY_STARTED, process=f"{data_type}_det")
 
     # note if user is video analysing without smoothing
     if (var_cls_model.get() != t('none')) and \
@@ -2837,12 +2808,8 @@ def deploy_model(path_to_image_folder, selected_options, data_type, simple_mode 
                             " continuer sans lissage?\n\nAppuyer sur 'Non' pour revenir en arrière."][i18n_lang_idx()]):
                             return
 
-    # display loading window
-    # try to update progress window, if AttributeError, it means it tries to update the img_det and we're working with a full image classifier
-    try:
-        state.progress_window.update_values(process = f"{data_type}_det", status = "load")
-    except AttributeError:
-        pass
+    # display loading window — event bus will update UI via event handlers
+    event_bus.emit(DEPLOY_PROGRESS, pct=0.0, message="Loading detection model", process=f"{data_type}_det")
 
     # prepare variables
     chosen_folder = str(Path(path_to_image_folder))
@@ -3048,17 +3015,11 @@ def deploy_model(path_to_image_folder, selected_options, data_type, simple_mode 
             # print frame extraction progress and dont continue until done
             if "Extracting frames for folder " in line and \
                 data_type == "vid":
-                state.progress_window.update_values(process = f"{data_type}_det",
-                                            status = "extracting frames")
-                event_bus.emit(DEPLOY_PROGRESS, pct=0.0, message="Extracting frames...")
+                event_bus.emit(DEPLOY_PROGRESS, pct=0.0, message="Extracting frames...", process=f"{data_type}_det")
                 extracting_frames_mode = True
             if extracting_frames_mode:
                 if '%' in line[0:4]:
-                    state.progress_window.update_values(process = f"{data_type}_det",
-                                                status = "extracting frames",
-                                                extracting_frames_txt = [f"Extracting frames... {line[:3]}%",
-                                                                        f"Extrayendo fotogramas... {line[:3]}%"])
-                    event_bus.emit(DEPLOY_PROGRESS, pct=float(line[:3]), message="Extracting frames...")
+                    event_bus.emit(DEPLOY_PROGRESS, pct=float(line[:3]), message="Extracting frames...", process=f"{data_type}_det")
             if "Extracted frames for" in line and \
                 data_type == "vid":
                     extracting_frames_mode = False
@@ -3082,23 +3043,13 @@ def deploy_model(path_to_image_folder, selected_options, data_type, simple_mode 
                 time_left = re.search("(?<=<)(.*)(?=,)", times)[1]
                 processing_speed = re.search("(?<=,)(.*)(?=])", times)[1].strip()
 
-                # show progress
-                state.progress_window.update_values(process = f"{data_type}_det",
-                                                status = "running",
-                                                cur_it = int(current_im),
-                                                tot_it = int(total_im),
-                                                time_ela = elapsed_time,
-                                                time_rem = time_left,
-                                                speed = processing_speed,
-                                                hware = GPU_param,
-                                                cancel_func = lambda: cancel_deployment(p),
-                                                frame_video_choice = frame_video_choice)
-                event_bus.emit(DEPLOY_PROGRESS, pct=float(percentage), message=f"Processing: {current_im}/{total_im}")
+                # show progress via event bus
+                event_bus.emit(DEPLOY_PROGRESS, pct=float(percentage), message=f"Processing: {current_im}/{total_im}", process=f"{data_type}_det")
             root.update()
 
         # process is done
-        state.progress_window.update_values(process = f"{data_type}_det", status = "done")
         root.update()
+        event_bus.emit(DEPLOY_PROGRESS, pct=100.0, message="Detection complete", process=f"{data_type}_det")
 
     # create addaxai metadata
     addaxai_metadata = {"addaxai_metadata" : {"version" : current_AA_version,
@@ -3124,7 +3075,7 @@ def deploy_model(path_to_image_folder, selected_options, data_type, simple_mode 
     if not state.cancel_deploy_model_pressed:
         # emit finished event
         results_path = os.path.join(chosen_folder, "image_recognition_file.json") if data_type == "img" else os.path.join(chosen_folder, "video_recognition_file.json")
-        event_bus.emit(DEPLOY_FINISHED, results_path=results_path)
+        event_bus.emit(DEPLOY_FINISHED, results_path=results_path, process=f"{data_type}_det")
 
         if var_cls_model.get() != t('none'):
             if data_type == "img":
