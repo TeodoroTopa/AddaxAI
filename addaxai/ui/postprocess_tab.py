@@ -5,6 +5,7 @@ including button controls and progress display. The class implements the Postpro
 protocol to abstract the UI from orchestration logic.
 """
 
+import logging
 from typing import Any, Dict, Optional
 
 from addaxai.core.events import event_bus
@@ -14,12 +15,20 @@ from addaxai.core.event_types import (
     POSTPROCESS_ERROR,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class PostprocessTab:
     """Manages the postprocessing workflow UI.
 
     Implements the PostprocessView protocol to provide a clean interface between
     the postprocessing orchestration logic (in app.py) and the UI widgets.
+
+    Event handlers receive progress data from orchestrators via the event bus
+    and forward it transparently to ProgressWindow.update_values(). The events
+    carry the exact same kwargs that update_values() expects (process, status,
+    cur_it, tot_it, time_ela, time_rem, cancel_func) so that no information
+    is lost in translation.
     """
 
     def __init__(
@@ -42,28 +51,49 @@ class PostprocessTab:
         event_bus.on(POSTPROCESS_ERROR, self._on_postprocess_error)
         event_bus.on(POSTPROCESS_FINISHED, self._on_postprocess_finished)
 
-    def _on_postprocess_progress(self, pct: float, message: str, process: Optional[str] = None, **kwargs: Any) -> None:
+    def _forward_to_progress_window(self, **kwargs: Any) -> None:
+        """Forward event kwargs to progress_window.update_values().
+
+        Extracts the kwargs that update_values() accepts and passes them
+        through unchanged. Any extra kwargs (like 'pct', 'message') are
+        ignored — they're for other consumers.
+        """
+        if not self.app_state or not hasattr(self.app_state, 'progress_window'):
+            return
+        pw = self.app_state.progress_window
+        if pw is None:
+            return
+
+        # Build the kwargs dict with only keys update_values() accepts
+        uv_kwargs = {}  # type: dict
+        for key in ('process', 'status', 'cur_it', 'tot_it', 'time_ela',
+                     'time_rem', 'speed', 'hware', 'cancel_func',
+                     'extracting_frames_txt', 'frame_video_choice'):
+            if key in kwargs:
+                uv_kwargs[key] = kwargs[key]
+
+        if 'process' not in uv_kwargs or 'status' not in uv_kwargs:
+            return  # Can't call update_values without these two
+
+        try:
+            pw.update_values(**uv_kwargs)
+        except (AttributeError, TypeError):
+            # ProgressWindow may not have the widgets for this process type
+            logger.debug("Could not forward to progress_window", exc_info=True)
+
+    def _on_postprocess_progress(self, **kwargs: Any) -> None:
         """Handle postprocessing progress event.
 
-        Translates event data to progress_window.update_values() calls.
+        Forwards all update_values()-compatible kwargs to ProgressWindow.
         """
+        pct = kwargs.get('pct', 0.0)
+        message = kwargs.get('message', '')
         self.show_progress(pct, message)
+        self._forward_to_progress_window(**kwargs)
 
-        # Wire to ProgressWindow if available
-        if self.app_state and hasattr(self.app_state, 'progress_window') and process:
-            try:
-                self.app_state.progress_window.update_values(
-                    process=process,
-                    status="running" if pct < 100 else "done",
-                    cur_it=int(pct),
-                    tot_it=100,
-                )
-            except (AttributeError, TypeError):
-                pass
-
-    def _on_postprocess_error(self, message: str, **kwargs: Any) -> None:
+    def _on_postprocess_error(self, **kwargs: Any) -> None:
         """Handle postprocessing error event."""
-        self.show_error(message)
+        self.show_error(kwargs.get('message', ''))
 
     def _on_postprocess_finished(self, **kwargs: Any) -> None:
         """Handle postprocessing finished event."""
