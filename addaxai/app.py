@@ -249,7 +249,8 @@ def postprocess(src_dir, dst_dir, thresh, sep, keep_series, keep_series_seconds,
     logger.debug("EXECUTED: %s", sys._getframe().f_code.co_name)
 
     # update progress window via event bus
-    event_bus.emit(POSTPROCESS_PROGRESS, pct=0.0, message="Initializing postprocessing", process=f"{data_type}_pst")
+    event_bus.emit(POSTPROCESS_PROGRESS, pct=0.0, message="Initializing postprocessing",
+                   process=f"{data_type}_pst", status="load")
 
     # plt needs csv files so make sure to produce them, even if the user didn't specify
     # if the user didn't specify to export to csv, make sure to remove them later on
@@ -398,10 +399,14 @@ def postprocess(src_dir, dst_dir, thresh, sep, keep_series, keep_series_seconds,
             elapsed_time_sep = str(datetime.timedelta(seconds=round(time.time() - start_time)))
             time_left_sep = str(datetime.timedelta(seconds=round(((time.time() - start_time) * n_images / nloop) - (time.time() - start_time))))
             percentage = (nloop / n_images) * 100
-            event_bus.emit(POSTPROCESS_PROGRESS, pct=float(percentage), message=f"Processing: {nloop}/{n_images}", process=f"{data_type}_pst")
+            event_bus.emit(POSTPROCESS_PROGRESS, pct=float(percentage), message=f"Processing: {nloop}/{n_images}",
+                           process=f"{data_type}_pst", status="running",
+                           cur_it=nloop, tot_it=n_images,
+                           time_ela=elapsed_time_sep, time_rem=time_left_sep,
+                           cancel_func=cancel)
 
             nloop += 1
-            root.update()
+            root.update()  # process tkinter event loop for GUI responsiveness
 
             # skip this iteration
             continue
@@ -435,9 +440,13 @@ def postprocess(src_dir, dst_dir, thresh, sep, keep_series, keep_series_seconds,
                     elapsed_time_sep = str(datetime.timedelta(seconds=round(time.time() - start_time)))
                     time_left_sep = str(datetime.timedelta(seconds=round(((time.time() - start_time) * n_images / nloop) - (time.time() - start_time))))
                     percentage = (nloop / n_images) * 100
-                    event_bus.emit(POSTPROCESS_PROGRESS, pct=float(percentage), message=f"Processing: {nloop}/{n_images}", process=f"{data_type}_pst")
+                    event_bus.emit(POSTPROCESS_PROGRESS, pct=float(percentage), message=f"Processing: {nloop}/{n_images}",
+                                   process=f"{data_type}_pst", status="running",
+                                   cur_it=nloop, tot_it=n_images,
+                                   time_ela=elapsed_time_sep, time_rem=time_left_sep,
+                                   cancel_func=cancel)
                     nloop += 1
-                    root.update()
+                    root.update()  # process tkinter event loop for GUI responsiveness
                     continue
 
                 im_to_crop_path = os.path.join(src_dir, file)
@@ -706,10 +715,14 @@ def postprocess(src_dir, dst_dir, thresh, sep, keep_series, keep_series_seconds,
         elapsed_time_sep = str(datetime.timedelta(seconds=round(time.time() - start_time)))
         time_left_sep = str(datetime.timedelta(seconds=round(((time.time() - start_time) * n_images / nloop) - (time.time() - start_time))))
         percentage = (nloop / n_images) * 100
-        event_bus.emit(POSTPROCESS_PROGRESS, pct=float(percentage), message=f"Processing: {nloop}/{n_images}", process=f"{data_type}_pst")
+        event_bus.emit(POSTPROCESS_PROGRESS, pct=float(percentage), message=f"Processing: {nloop}/{n_images}",
+                       process=f"{data_type}_pst", status="running",
+                       cur_it=nloop, tot_it=n_images,
+                       time_ela=elapsed_time_sep, time_rem=time_left_sep,
+                       cancel_func=cancel)
 
         nloop += 1
-        root.update()
+        root.update()  # process tkinter event loop for GUI responsiveness
 
     # create summary csv
     if exp:
@@ -825,8 +838,9 @@ def postprocess(src_dir, dst_dir, thresh, sep, keep_series, keep_series_seconds,
         make_json_absolute(recognition_file, var_choose_folder.get())
 
     # let the user know it's done via event bus
-    event_bus.emit(POSTPROCESS_PROGRESS, pct=100.0, message="Postprocessing complete", process=f"{data_type}_pst")
-    root.update()
+    event_bus.emit(POSTPROCESS_PROGRESS, pct=100.0, message="Postprocessing complete",
+                   process=f"{data_type}_pst", status="done")
+    root.update()  # process tkinter event loop for GUI responsiveness
 
     # create graphs
     if plt:
@@ -1354,13 +1368,13 @@ def produce_plots(results_dir):
     def update_pbar_plt():
         pbar.update(1)
         tqdm_stats = pbar.format_dict
-        state.progress_window.update_values(process = "plt",
-                                        status = "running",
-                                        cur_it = tqdm_stats['n'],
-                                        tot_it = tqdm_stats['total'],
-                                        time_ela = str(datetime.timedelta(seconds=round(tqdm_stats['elapsed']))),
-                                        time_rem = str(datetime.timedelta(seconds=round((tqdm_stats['total'] - tqdm_stats['n']) / tqdm_stats['n'] * tqdm_stats['elapsed'] if tqdm_stats['n'] else 0))),
-                                        cancel_func = cancel)
+        event_bus.emit(POSTPROCESS_PROGRESS,
+                       process="plt", status="running",
+                       cur_it=tqdm_stats['n'],
+                       tot_it=tqdm_stats['total'],
+                       time_ela=str(datetime.timedelta(seconds=round(tqdm_stats['elapsed']))),
+                       time_rem=str(datetime.timedelta(seconds=round((tqdm_stats['total'] - tqdm_stats['n']) / tqdm_stats['n'] * tqdm_stats['elapsed'] if tqdm_stats['n'] else 0))),
+                       cancel_func=cancel)
 
     # create all time plots
     def create_time_plots(data, save_path_base, temporal_units, pbar, counts_df):
@@ -1933,7 +1947,7 @@ def produce_plots(results_dir):
 
     # create plots
     with tqdm(total=n_plots, disable=False) as pbar:
-        state.progress_window.update_values(process = "plt", status = "load")
+        event_bus.emit(POSTPROCESS_PROGRESS, process="plt", status="load")
         if any_dates_present: create_time_plots(det_df, results_dir, temporal_units, pbar, n_obs_per_label_with_timestamps);plt.close('all')
         if state.cancel_var: return
         if data_permits_map_creation:
@@ -1955,7 +1969,7 @@ def produce_plots(results_dir):
                 overlay_logo(image_path, logo_for_graphs)
 
     # end pbar
-    state.progress_window.update_values(process = "plt", status = "done")
+    event_bus.emit(POSTPROCESS_PROGRESS, process="plt", status="done")
 
 # open human-in-the-loop verification windows
 def open_annotation_windows(recognition_file, class_list_txt, file_list_txt, label_map):
@@ -2591,8 +2605,9 @@ def classify_detections(json_fpath, data_type, simple_mode = False):
     event_bus.emit(CLASSIFY_STARTED, process=f"{data_type}_cls")
 
     # show user it's loading via event bus
-    root.update()
-    event_bus.emit(CLASSIFY_PROGRESS, pct=0.0, message="Loading classification model", process=f"{data_type}_cls")
+    root.update()  # process tkinter event loop for GUI responsiveness
+    event_bus.emit(CLASSIFY_PROGRESS, pct=0.0, message="Loading classification model",
+                   process=f"{data_type}_cls", status="load")
 
     # load model specific variables
     model_vars = load_model_vars()
@@ -2698,6 +2713,9 @@ def classify_detections(json_fpath, data_type, simple_mode = False):
 
     # calculate metrics while running
     status_setting = 'running'
+    elapsed_time = ""
+    processing_speed = ""
+    GPU_param = "Unknown"
     for line in p.stdout:
 
         # save output if something goes wrong
@@ -2759,14 +2777,22 @@ def classify_detections(json_fpath, data_type, simple_mode = False):
             processing_speed = re.search("(?<=,)(.*)(?=])", times)[1].strip()
 
             # print stats via event bus
-            event_bus.emit(CLASSIFY_PROGRESS, pct=float(percentage), message=f"Classifying: {current_im}/{total_im}", process=f"{data_type}_cls")
-        root.update()
+            event_bus.emit(CLASSIFY_PROGRESS, pct=float(percentage), message=f"Classifying: {current_im}/{total_im}",
+                           process=f"{data_type}_cls", status=status_setting,
+                           cur_it=int(current_im), tot_it=int(total_im),
+                           time_ela=elapsed_time, time_rem=time_left,
+                           speed=processing_speed, hware=GPU_param,
+                           cancel_func=lambda: cancel_deployment(p))
+        root.update()  # process tkinter event loop for GUI responsiveness
 
     # process is done via event bus
+    event_bus.emit(CLASSIFY_PROGRESS, pct=100.0, message="Classification complete",
+                   process=f"{data_type}_cls", status="done",
+                   time_ela=elapsed_time, speed=processing_speed)
     # emit finished event
     event_bus.emit(CLASSIFY_FINISHED, results_path=json_fpath, process=f"{data_type}_cls")
 
-    root.update()
+    root.update()  # process tkinter event loop for GUI responsiveness
 
 # quit popen process and update UI state
 def cancel_deployment(process):
@@ -2809,7 +2835,8 @@ def deploy_model(path_to_image_folder, selected_options, data_type, simple_mode 
                             return
 
     # display loading window — event bus will update UI via event handlers
-    event_bus.emit(DEPLOY_PROGRESS, pct=0.0, message="Loading detection model", process=f"{data_type}_det")
+    event_bus.emit(DEPLOY_PROGRESS, pct=0.0, message="Loading detection model",
+                   process=f"{data_type}_det", status="load")
 
     # prepare variables
     chosen_folder = str(Path(path_to_image_folder))
@@ -2953,7 +2980,7 @@ def deploy_model(path_to_image_folder, selected_options, data_type, simple_mode 
             # catch model errors
             if line.startswith("No image files found"):
                 error_msg = t('msg_no_images_found')
-                event_bus.emit(DEPLOY_ERROR, message="No image files found")
+                event_bus.emit(DEPLOY_ERROR, message="No image files found", process=f"{data_type}_det")
                 mb.showerror(error_msg,
                             [f"There are no images found in '{chosen_folder}'. \n\nAre you sure you specified the correct folder?"
                             f" If the files are in subdirectories, make sure you don't tick '{t('lbl_exclude_subs')}'.",
@@ -2963,21 +2990,21 @@ def deploy_model(path_to_image_folder, selected_options, data_type, simple_mode 
                             f" Si les fichiers sont dans des sous-dossiers, assurez-vous ne pas avoir coché '{t('lbl_exclude_subs')}'."][i18n_lang_idx()])
                 return
             if line.startswith("No videos found"):
-                event_bus.emit(DEPLOY_ERROR, message="No videos found")
+                event_bus.emit(DEPLOY_ERROR, message="No videos found", process=f"{data_type}_det")
                 mb.showerror(t('msg_no_videos_found'),
                             line + [f"\n\nAre you sure you specified the correct folder? If the files are in subdirectories, make sure you don't tick '{t('lbl_exclude_subs')}'.",
                                     f"\n\n¿Está seguro de haber especificado la carpeta correcta? Si los archivos están en subdirectorios, asegúrese de no marcar la casilla '{t('lbl_exclude_subs')}'.",
                                     f"\n\nAvez-vous spécifié le bon dossier? Si les fichiers sont dans des sous-dossiers, assurez-vous ne pas avoir coché '{t('lbl_exclude_subs')}'."][i18n_lang_idx()])
                 return
             if line.startswith("No frames extracted"):
-                event_bus.emit(DEPLOY_ERROR, message="No frames extracted")
+                event_bus.emit(DEPLOY_ERROR, message="No frames extracted", process=f"{data_type}_det")
                 mb.showerror(t('msg_could_not_extract_frames'),
                             line + ["\n\nConverting the videos to .mp4 might fix the issue.",
                                     "\n\nConvertir los vídeos a .mp4 podría solucionar el problema.",
                                     "\n\nConvertir les vidéos au format .mp4 pourrait régler le problème."][i18n_lang_idx()])
                 return
             if line.startswith("UnicodeEncodeError:"):
-                event_bus.emit(DEPLOY_ERROR, message="UnicodeEncodeError: Unparsable special character in filename")
+                event_bus.emit(DEPLOY_ERROR, message="UnicodeEncodeError: Unparsable special character in filename", process=f"{data_type}_det")
                 mb.showerror("Unparsable special character",
                             [f"{line}\n\nThere seems to be a special character in a filename that cannot be parsed. Unfortunately, it's not"
                             " possible to point you to the problematic file directly, but I can tell you that the last successfully analysed"
@@ -3015,11 +3042,15 @@ def deploy_model(path_to_image_folder, selected_options, data_type, simple_mode 
             # print frame extraction progress and dont continue until done
             if "Extracting frames for folder " in line and \
                 data_type == "vid":
-                event_bus.emit(DEPLOY_PROGRESS, pct=0.0, message="Extracting frames...", process=f"{data_type}_det")
+                event_bus.emit(DEPLOY_PROGRESS, pct=0.0, message="Extracting frames...",
+                               process=f"{data_type}_det", status="extracting frames")
                 extracting_frames_mode = True
             if extracting_frames_mode:
                 if '%' in line[0:4]:
-                    event_bus.emit(DEPLOY_PROGRESS, pct=float(line[:3]), message="Extracting frames...", process=f"{data_type}_det")
+                    event_bus.emit(DEPLOY_PROGRESS, pct=float(line[:3]), message="Extracting frames...",
+                                   process=f"{data_type}_det", status="extracting frames",
+                                   extracting_frames_txt=[f"Extracting frames... {line[:3]}%",
+                                                          f"Extrayendo fotogramas... {line[:3]}%"])
             if "Extracted frames for" in line and \
                 data_type == "vid":
                     extracting_frames_mode = False
@@ -3044,12 +3075,19 @@ def deploy_model(path_to_image_folder, selected_options, data_type, simple_mode 
                 processing_speed = re.search("(?<=,)(.*)(?=])", times)[1].strip()
 
                 # show progress via event bus
-                event_bus.emit(DEPLOY_PROGRESS, pct=float(percentage), message=f"Processing: {current_im}/{total_im}", process=f"{data_type}_det")
-            root.update()
+                event_bus.emit(DEPLOY_PROGRESS, pct=float(percentage), message=f"Processing: {current_im}/{total_im}",
+                               process=f"{data_type}_det", status="running",
+                               cur_it=int(current_im), tot_it=int(total_im),
+                               time_ela=elapsed_time, time_rem=time_left,
+                               speed=processing_speed, hware=GPU_param,
+                               cancel_func=lambda: cancel_deployment(p),
+                               frame_video_choice=frame_video_choice)
+            root.update()  # process tkinter event loop for GUI responsiveness
 
         # process is done
-        root.update()
-        event_bus.emit(DEPLOY_PROGRESS, pct=100.0, message="Detection complete", process=f"{data_type}_det")
+        root.update()  # process tkinter event loop for GUI responsiveness
+        event_bus.emit(DEPLOY_PROGRESS, pct=100.0, message="Detection complete",
+                       process=f"{data_type}_det", status="done")
 
     # create addaxai metadata
     addaxai_metadata = {"addaxai_metadata" : {"version" : current_AA_version,
@@ -3084,7 +3122,7 @@ def deploy_model(path_to_image_folder, selected_options, data_type, simple_mode 
                 classify_detections(os.path.join(chosen_folder, "video_recognition_file.json"), data_type, simple_mode = simple_mode)
     else:
         # emit cancelled event
-        event_bus.emit(DEPLOY_CANCELLED)
+        event_bus.emit(DEPLOY_CANCELLED, process=f"{data_type}_det")
 
 
 

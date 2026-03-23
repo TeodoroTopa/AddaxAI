@@ -5,6 +5,7 @@ including the deploy button, progress display, and related event handlers.
 The class implements the DeployView protocol to abstract the UI from orchestration logic.
 """
 
+import logging
 from typing import Any, Callable, List, Optional
 
 try:
@@ -23,12 +24,20 @@ from addaxai.core.event_types import (
 )
 from addaxai.i18n import t
 
+logger = logging.getLogger(__name__)
+
 
 class DeployTab:
     """Manages the deployment workflow UI.
 
     Implements the DeployView protocol to provide a clean interface between
     the deployment orchestration logic (in app.py) and the UI widgets.
+
+    Event handlers receive progress data from orchestrators via the event bus
+    and forward it transparently to ProgressWindow.update_values(). The events
+    carry the exact same kwargs that update_values() expects (process, status,
+    cur_it, tot_it, time_ela, time_rem, speed, hware, cancel_func, etc.)
+    so that no information is lost in translation.
     """
 
     def __init__(
@@ -49,7 +58,6 @@ class DeployTab:
         self.app_state = app_state
         self._button_ref: Optional[Any] = None
         self._progress_label_ref: Optional[Any] = None
-        self._current_process: Optional[str] = None  # Track current process (img_det, vid_det, img_cls, vid_cls)
 
         # Subscribe to deployment and classification events
         event_bus.on(DEPLOY_PROGRESS, self._on_deploy_progress)
@@ -59,71 +67,72 @@ class DeployTab:
         event_bus.on(CLASSIFY_ERROR, self._on_classify_error)
         event_bus.on(CLASSIFY_FINISHED, self._on_classify_finished)
 
-    def _on_deploy_progress(self, pct: float, message: str, process: Optional[str] = None, **kwargs: Any) -> None:
+    def _forward_to_progress_window(self, **kwargs: Any) -> None:
+        """Forward event kwargs to progress_window.update_values().
+
+        Extracts the kwargs that update_values() accepts and passes them
+        through unchanged. Any extra kwargs (like 'pct', 'message') are
+        ignored — they're for other consumers.
+        """
+        if not self.app_state or not hasattr(self.app_state, 'progress_window'):
+            return
+        pw = self.app_state.progress_window
+        if pw is None:
+            return
+
+        # Build the kwargs dict with only keys update_values() accepts
+        uv_kwargs = {}  # type: dict
+        for key in ('process', 'status', 'cur_it', 'tot_it', 'time_ela',
+                     'time_rem', 'speed', 'hware', 'cancel_func',
+                     'extracting_frames_txt', 'frame_video_choice'):
+            if key in kwargs:
+                uv_kwargs[key] = kwargs[key]
+
+        if 'process' not in uv_kwargs or 'status' not in uv_kwargs:
+            return  # Can't call update_values without these two
+
+        try:
+            pw.update_values(**uv_kwargs)
+        except (AttributeError, TypeError):
+            # ProgressWindow may not have the widgets for this process type
+            # (e.g. full-image classifier has no img_det frame)
+            logger.debug("Could not forward to progress_window", exc_info=True)
+
+    def _on_deploy_progress(self, **kwargs: Any) -> None:
         """Handle deployment progress event.
 
-        Translates event data to progress_window.update_values() calls.
+        Forwards all update_values()-compatible kwargs to ProgressWindow.
         """
+        pct = kwargs.get('pct', 0.0)
+        message = kwargs.get('message', '')
         self.show_progress(pct, message)
+        self._forward_to_progress_window(**kwargs)
 
-        # Wire to ProgressWindow if available
-        if self.app_state and hasattr(self.app_state, 'progress_window') and process:
-            try:
-                # Update progress window with percentage as iteration proxy
-                self.app_state.progress_window.update_values(
-                    process=process,
-                    status="running" if pct < 100 else "done",
-                    cur_it=int(pct),
-                    tot_it=100,
-                )
-            except (AttributeError, TypeError):
-                pass
-
-    def _on_deploy_error(self, message: str, process: Optional[str] = None, **kwargs: Any) -> None:
+    def _on_deploy_error(self, **kwargs: Any) -> None:
         """Handle deployment error event."""
-        self.show_error(message)
+        self.show_error(kwargs.get('message', ''))
 
-    def _on_deploy_finished(self, results_path: str, process: Optional[str] = None, **kwargs: Any) -> None:
+    def _on_deploy_finished(self, **kwargs: Any) -> None:
         """Handle deployment finished event."""
-        self.show_completion(results_path)
+        self.show_completion(kwargs.get('results_path', ''))
 
-        # Wire to ProgressWindow if available
-        if self.app_state and hasattr(self.app_state, 'progress_window') and process:
-            try:
-                self.app_state.progress_window.update_values(process=process, status="done")
-            except (AttributeError, TypeError):
-                pass
+    def _on_classify_progress(self, **kwargs: Any) -> None:
+        """Handle classification progress event.
 
-    def _on_classify_progress(self, pct: float, message: str, process: Optional[str] = None, **kwargs: Any) -> None:
-        """Handle classification progress event."""
+        Forwards all update_values()-compatible kwargs to ProgressWindow.
+        """
+        pct = kwargs.get('pct', 0.0)
+        message = kwargs.get('message', '')
         self.show_progress(pct, message)
+        self._forward_to_progress_window(**kwargs)
 
-        # Wire to ProgressWindow if available
-        if self.app_state and hasattr(self.app_state, 'progress_window') and process:
-            try:
-                self.app_state.progress_window.update_values(
-                    process=process,
-                    status="running" if pct < 100 else "done",
-                    cur_it=int(pct),
-                    tot_it=100,
-                )
-            except (AttributeError, TypeError):
-                pass
-
-    def _on_classify_error(self, message: str, process: Optional[str] = None, **kwargs: Any) -> None:
+    def _on_classify_error(self, **kwargs: Any) -> None:
         """Handle classification error event."""
-        self.show_error(message)
+        self.show_error(kwargs.get('message', ''))
 
-    def _on_classify_finished(self, results_path: str, process: Optional[str] = None, **kwargs: Any) -> None:
+    def _on_classify_finished(self, **kwargs: Any) -> None:
         """Handle classification finished event."""
-        self.show_completion(results_path)
-
-        # Wire to ProgressWindow if available
-        if self.app_state and hasattr(self.app_state, 'progress_window') and process:
-            try:
-                self.app_state.progress_window.update_values(process=process, status="done")
-            except (AttributeError, TypeError):
-                pass
+        self.show_completion(kwargs.get('results_path', ''))
 
     def create_button(self) -> Any:
         """Create and return the start deploy button.
