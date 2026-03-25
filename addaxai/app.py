@@ -7265,9 +7265,9 @@ def toggle_image_size_for_deploy():
 # toggle separation subframe
 def toggle_sep_frame():
     if var_separate_files.get():
-        sep_frame.grid(row=sep_frame_row, column=0, columnspan=2, sticky = 'ew')
-        enable_widgets(sep_frame)
-        sep_frame.configure(fg='black')
+        postprocess_view.sep_frame.grid(row=sep_frame_row, column=0, columnspan=2, sticky='ew')
+        enable_widgets(postprocess_view.sep_frame)
+        postprocess_view.sep_frame.configure(fg='black')
         # ensure nested keep-series options reflect current checkbox state
         try:
             toggle_keep_series_frame()
@@ -7276,49 +7276,49 @@ def toggle_sep_frame():
     else:
         # hide nested keep-series options too
         try:
-            keep_series_frame.grid_forget()
+            postprocess_view.keep_series_frame.grid_forget()
         except Exception:
             pass
-        disable_widgets(sep_frame)
-        sep_frame.configure(fg='grey80')
-        sep_frame.grid_forget()
+        disable_widgets(postprocess_view.sep_frame)
+        postprocess_view.sep_frame.configure(fg='grey80')
+        postprocess_view.sep_frame.grid_forget()
     resize_canvas_to_content()
 
 # toggle keep series subframe
 def toggle_keep_series_frame():
     # only relevant when separation is enabled
     if var_separate_files.get() and var_keep_series.get():
-        keep_series_frame.grid(row=keep_series_frame_row, column=0, columnspan=2, sticky = 'ew')
-        enable_widgets(keep_series_frame)
-        keep_series_frame.configure(fg='black')
+        postprocess_view.keep_series_frame.grid(row=keep_series_frame_row, column=0, columnspan=2, sticky='ew')
+        enable_widgets(postprocess_view.keep_series_frame)
+        postprocess_view.keep_series_frame.configure(fg='black')
     else:
-        disable_widgets(keep_series_frame)
-        keep_series_frame.configure(fg='grey80')
-        keep_series_frame.grid_forget()
+        disable_widgets(postprocess_view.keep_series_frame)
+        postprocess_view.keep_series_frame.configure(fg='grey80')
+        postprocess_view.keep_series_frame.grid_forget()
     resize_canvas_to_content()
 
 # toggle export subframe
 def toggle_exp_frame():
-    if var_exp.get() and lbl_exp.cget('state') == "normal":
-        exp_frame.grid(row=exp_frame_row, column=0, columnspan=2, sticky = 'ew')
-        enable_widgets(exp_frame)
-        exp_frame.configure(fg='black')
+    if var_exp.get() and postprocess_view.lbl_exp.cget('state') == "normal":
+        postprocess_view.exp_frame.grid(row=exp_frame_row, column=0, columnspan=2, sticky='ew')
+        enable_widgets(postprocess_view.exp_frame)
+        postprocess_view.exp_frame.configure(fg='black')
     else:
-        disable_widgets(exp_frame)
-        exp_frame.configure(fg='grey80')
-        exp_frame.grid_forget()
+        disable_widgets(postprocess_view.exp_frame)
+        postprocess_view.exp_frame.configure(fg='grey80')
+        postprocess_view.exp_frame.grid_forget()
     resize_canvas_to_content()
 
 # toggle visualization subframe
 def toggle_vis_frame():
-    if var_vis_files.get() and lbl_vis_files.cget('state') == "normal":
-        vis_frame.grid(row=vis_frame_row, column=0, columnspan=2, sticky = 'ew')
-        enable_widgets(vis_frame)
-        vis_frame.configure(fg='black')
+    if var_vis_files.get() and postprocess_view.lbl_vis_files.cget('state') == "normal":
+        postprocess_view.vis_frame.grid(row=vis_frame_row, column=0, columnspan=2, sticky='ew')
+        enable_widgets(postprocess_view.vis_frame)
+        postprocess_view.vis_frame.configure(fg='black')
     else:
-        disable_widgets(vis_frame)
-        vis_frame.configure(fg='grey80')
-        vis_frame.grid_forget()
+        disable_widgets(postprocess_view.vis_frame)
+        postprocess_view.vis_frame.configure(fg='grey80')
+        postprocess_view.vis_frame.grid_forget()
     resize_canvas_to_content()
 
 # on checkbox change
@@ -8248,195 +8248,41 @@ fth_step.columnconfigure(1, weight=1, minsize=widget_width)
 # Instantiate PostprocessTab view
 postprocess_view = PostprocessTab(fth_step, app_state=state)
 
-# folder for results
-row_output_dir = 0
-lbl_output_dir = Label(master=fth_step, text=t('lbl_output_dir'), width=1, anchor="w")
-lbl_output_dir.grid(row=row_output_dir, sticky='nesw', pady=2)
-var_output_dir.set("")
-dsp_output_dir = Label(master=fth_step, textvariable=var_output_dir_short, fg=green_primary)
-btn_output_dir = Button(master=fth_step, text=t('browse'), width=1, command=lambda: browse_dir(var_output_dir, var_output_dir_short, dsp_output_dir, 25, row_output_dir, 0, 'e'))
-btn_output_dir.grid(row=row_output_dir, column=1, sticky='nesw', padx=5)
-
-# separate files
-row_separate_files = 1
-lbl_separate_files = Label(fth_step, text=t('lbl_separate_files'), width=1, anchor="w")
-lbl_separate_files.grid(row=row_separate_files, sticky='nesw', pady=2)
-var_separate_files.set(global_vars['var_separate_files'])
-chb_separate_files = Checkbutton(fth_step, variable=var_separate_files, command=toggle_sep_frame, anchor="w")
-chb_separate_files.grid(row=row_separate_files, column=1, sticky='nesw', padx=5)
-
-## separation frame
-sep_frame_row = 2
-sep_frame = LabelFrame(fth_step, text=" ↳ " + t('sep_frame') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, borderwidth=1, fg="grey80")  # type: ignore[arg-type]
-sep_frame.configure(font=(text_font, second_level_frame_font_size, "bold"))
-sep_frame.grid(row=sep_frame_row, column=0, columnspan=2, sticky = 'ew')
-sep_frame.columnconfigure(0, weight=1, minsize=label_width - subframe_correction_factor)
-sep_frame.columnconfigure(1, weight=1, minsize=widget_width - subframe_correction_factor)
-sep_frame.grid_forget()
-
-# method of file placement
-row_file_placement = 0
-lbl_file_placement = Label(sep_frame, text="     " + t('lbl_file_placement'), pady=2, width=1, anchor="w")
-lbl_file_placement.grid(row=row_file_placement, sticky='nesw')
-var_file_placement.set(global_vars['var_file_placement'])
-rad_file_placement_move = Radiobutton(sep_frame, text=t('copy'), variable=var_file_placement, value=2)
-rad_file_placement_move.grid(row=row_file_placement, column=1, sticky='w', padx=5)
-rad_file_placement_copy = Radiobutton(sep_frame, text=t('move'), variable=var_file_placement, value=1)
-rad_file_placement_copy.grid(row=row_file_placement, column=1, sticky='e', padx=5)
-
-# separate per confidence
-row_sep_conf = 1
-lbl_sep_conf = Label(sep_frame, text="     " + t('lbl_sep_conf'), width=1, anchor="w")
-lbl_sep_conf.grid(row=row_sep_conf, sticky='nesw', pady=2)
-var_sep_conf.set(global_vars['var_sep_conf'])
-chb_sep_conf = Checkbutton(sep_frame, variable=var_sep_conf, anchor="w")
-chb_sep_conf.grid(row=row_sep_conf, column=1, sticky='nesw', padx=5)
-
-
-# keep series files (only affects separation)
-row_keep_series = 2
-lbl_keep_series = Label(sep_frame, text="     " + t('lbl_keep_series'), width=1, anchor="w")
-lbl_keep_series.grid(row=row_keep_series, sticky='nesw', pady=2)
-var_keep_series.set(global_vars['var_keep_series'])
-chb_keep_series = Checkbutton(sep_frame, variable=var_keep_series, command=toggle_keep_series_frame, anchor="w")
-chb_keep_series.grid(row=row_keep_series, column=1, sticky='nesw', padx=5)
-
-## keep_series frame (nested under separation options)
-keep_series_frame_row = 3
-keep_series_frame = LabelFrame(sep_frame, text="        ↳ " + t('keep_series_frame') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, borderwidth=1, fg="grey80")  # type: ignore[arg-type]
-keep_series_frame.configure(font=(text_font, second_level_frame_font_size, "bold"))
-keep_series_frame.grid(row=keep_series_frame_row, column=0, columnspan=2, sticky = 'ew')
-keep_series_frame.columnconfigure(0, weight=1, minsize=label_width - subframe_correction_factor)
-keep_series_frame.columnconfigure(1, weight=1, minsize=widget_width - subframe_correction_factor)
-keep_series_frame.grid_forget()
-
-# keep series seconds - only visible if keep series is checked
-row_keep_series_seconds = 0
-lbl_keep_series_seconds = Label(keep_series_frame, text="     " + t('lbl_keep_series_seconds'), width=1, anchor="w")
-lbl_keep_series_seconds.grid(row=row_keep_series_seconds, sticky='nesw', pady=2)
-var_keep_series_seconds.set(global_vars['var_keep_series_seconds'])
-chb_keep_series_seconds = Scale(keep_series_frame, from_=0.1, to=10, resolution=0.1, orient=HORIZONTAL, variable=var_keep_series_seconds, showvalue=0, width=10, length=1)  # type: ignore[arg-type]
-chb_keep_series_seconds.grid(row=row_keep_series_seconds, column=1, sticky='ew', padx=10)
-dsp_keep_series_seconds = Label(keep_series_frame, textvariable=var_keep_series_seconds)
-dsp_keep_series_seconds.configure(fg=green_primary)
-dsp_keep_series_seconds.grid(row=row_keep_series_seconds, column=0, sticky='e', padx=0)
-
-# keep series species - optional trigger filter
-row_keep_series_species = 1
-lbl_keep_series_species = Label(keep_series_frame, text="     " + t('lbl_keep_series_species'), width=1, anchor="w")
-lbl_keep_series_species.grid(row=row_keep_series_species, sticky='nesw', pady=2)
-
-# display: show how many triggers are selected (empty = any)
-dsp_keep_series_species = Label(keep_series_frame, fg=green_primary)
-if len(global_vars.get('var_keep_series_species', []) or []) == 0:
-    dsp_keep_series_species.configure(text=t('any'))
-else:
-    dsp_keep_series_species.configure(text=str(len(global_vars.get('var_keep_series_species', []))))
-dsp_keep_series_species.grid(row=row_keep_series_species, column=0, sticky='e', padx=0)
-
-btn_keep_series_species = Button(keep_series_frame, text=t('select'), command=open_keep_series_species_selection)
-btn_keep_series_species.grid(row=row_keep_series_species, column=1, sticky='w', padx=10)
-
-
-## visualize images
-row_vis_files = 3
-lbl_vis_files = Label(fth_step, text=t('lbl_vis_files'), width=1, anchor="w")
-lbl_vis_files.grid(row=row_vis_files, sticky='nesw', pady=2)
-var_vis_files.set(global_vars['var_vis_files'])
-chb_vis_files = Checkbutton(fth_step, variable=var_vis_files, anchor="w", command=toggle_vis_frame)
-chb_vis_files.grid(row=row_vis_files, column=1, sticky='nesw', padx=5)
-
-## visualization options
-vis_frame_row = 4
-vis_frame = LabelFrame(fth_step, text=" ↳ " + t('vis_frame') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, borderwidth=1, fg="grey80")  # type: ignore[arg-type]
-vis_frame.configure(font=(text_font, second_level_frame_font_size, "bold"))
-vis_frame.grid(row=vis_frame_row, column=0, columnspan=2, sticky = 'ew')
-vis_frame.columnconfigure(0, weight=1, minsize=label_width - subframe_correction_factor)
-vis_frame.columnconfigure(1, weight=1, minsize=widget_width - subframe_correction_factor)
-vis_frame.grid_forget()
-
-## draw bboxes
-row_vis_bbox = 0
-lbl_vis_bbox = Label(vis_frame, text="     " + t('lbl_vis_bbox'), width=1, anchor="w")
-lbl_vis_bbox.grid(row=row_vis_bbox, sticky='nesw', pady=2)
-var_vis_bbox.set(global_vars['var_vis_bbox'])
-chb_vis_bbox = Checkbutton(vis_frame, variable=var_vis_bbox, anchor="w")
-chb_vis_bbox.grid(row=row_vis_bbox, column=1, sticky='nesw', padx=5)
-
-# line size
-row_vis_size = 1
-lbl_vis_size = Label(vis_frame, text="        ↳ " + t('lbl_vis_size'), pady=2, width=1, anchor="w")
-lbl_vis_size.grid(row=row_vis_size, sticky='nesw')
-var_vis_size.set(t('dpd_vis_size')[global_vars['var_vis_size_idx']])
-dpd_vis_size = OptionMenu(vis_frame, var_vis_size, *t('dpd_vis_size'))
-dpd_vis_size.configure(width=1)
-dpd_vis_size.grid(row=row_vis_size, column=1, sticky='nesw', padx=5)
-
-## blur people
-row_vis_blur = 2
-lbl_vis_blur = Label(vis_frame, text="     " + t('lbl_vis_blur'), width=1, anchor="w")
-lbl_vis_blur.grid(row=row_vis_blur, sticky='nesw', pady=2)
-var_vis_blur.set(global_vars['var_vis_blur'])
-chb_vis_blur = Checkbutton(vis_frame, variable=var_vis_blur, anchor="w")
-chb_vis_blur.grid(row=row_vis_blur, column=1, sticky='nesw', padx=5)
-
-## crop images
-row_crp_files = 5
-lbl_crp_files = Label(fth_step, text=t('lbl_crp_files'), width=1, anchor="w")
-lbl_crp_files.grid(row=row_crp_files, sticky='nesw', pady=2)
-var_crp_files.set(global_vars['var_crp_files'])
-chb_crp_files = Checkbutton(fth_step, variable=var_crp_files, anchor="w")
-chb_crp_files.grid(row=row_crp_files, column=1, sticky='nesw', padx=5)
-
-# plot
-row_plt = 6
-lbl_plt = Label(fth_step, text=t('lbl_plt'), width=1, anchor="w")
-lbl_plt.grid(row=row_plt, sticky='nesw', pady=2)
-var_plt.set(global_vars['var_plt'])
-chb_plt = Checkbutton(fth_step, variable=var_plt, anchor="w")
-chb_plt.grid(row=row_plt, column=1, sticky='nesw', padx=5)
-
-# export results
-row_exp = 7
-lbl_exp = Label(fth_step, text=t('lbl_exp'), width=1, anchor="w")
-lbl_exp.grid(row=row_exp, sticky='nesw', pady=2)
-var_exp.set(global_vars['var_exp'])
-chb_exp = Checkbutton(fth_step, variable=var_exp, anchor="w", command=toggle_exp_frame)
-chb_exp.grid(row=row_exp, column=1, sticky='nesw', padx=5)
-
-## exportation options
-exp_frame_row = 8
-exp_frame = LabelFrame(fth_step, text=" ↳ " + t('exp_frame') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, borderwidth=1, fg="grey80")  # type: ignore[arg-type]
-exp_frame.configure(font=(text_font, second_level_frame_font_size, "bold"))
-exp_frame.grid(row=exp_frame_row, column=0, columnspan=2, sticky = 'ew')
-exp_frame.columnconfigure(0, weight=1, minsize=label_width - subframe_correction_factor)
-exp_frame.columnconfigure(1, weight=1, minsize=widget_width - subframe_correction_factor)
-exp_frame.grid_forget()
-
-# export format
-row_exp_format = 0
-lbl_exp_format = Label(exp_frame, text="     " + t('lbl_exp_format'), pady=2, width=1, anchor="w")
-lbl_exp_format.grid(row=row_exp_format, sticky='nesw')
-var_exp_format.set(t('dpd_exp_format')[global_vars['var_exp_format_idx']])
-dpd_exp_format = OptionMenu(exp_frame, var_exp_format, *t('dpd_exp_format'))
-dpd_exp_format.configure(width=1)
-dpd_exp_format.grid(row=row_exp_format, column=1, sticky='nesw', padx=5)
-
-# threshold
-row_lbl_thresh = 9
-lbl_thresh = Label(fth_step, text=t('lbl_thresh'), width=1, anchor="w")
-lbl_thresh.grid(row=row_lbl_thresh, sticky='nesw', pady=2)
-var_thresh.set(global_vars['var_thresh'])
-scl_thresh = Scale(fth_step, from_=0.01, to=1, resolution=0.01, orient=HORIZONTAL, variable=var_thresh, showvalue=0, width=10, length=1)  # type: ignore[arg-type]
-scl_thresh.grid(row=row_lbl_thresh, column=1, sticky='ew', padx=10)
-dsp_thresh = Label(fth_step, textvariable=var_thresh)
-dsp_thresh.configure(fg=green_primary)
-dsp_thresh.grid(row=row_lbl_thresh, column=0, sticky='e', padx=0)
-
-# postprocessing button
-row_start_postprocess = 10
-btn_start_postprocess = Button(fth_step, text=t('btn_start_postprocess'), command=start_postprocess)
-btn_start_postprocess.grid(row=row_start_postprocess, column=0, columnspan = 2, sticky='ew')
+# Build postprocessing widgets
+postprocess_view.build_widgets(
+    global_vars=global_vars,
+    var_output_dir=var_output_dir,
+    var_output_dir_short=var_output_dir_short,
+    var_separate_files=var_separate_files,
+    var_file_placement=var_file_placement,
+    var_sep_conf=var_sep_conf,
+    var_keep_series=var_keep_series,
+    var_keep_series_seconds=var_keep_series_seconds,
+    var_vis_files=var_vis_files,
+    var_vis_bbox=var_vis_bbox,
+    var_vis_size=var_vis_size,
+    var_vis_blur=var_vis_blur,
+    var_crp_files=var_crp_files,
+    var_plt=var_plt,
+    var_exp=var_exp,
+    var_exp_format=var_exp_format,
+    var_thresh=var_thresh,
+    green_primary=green_primary,
+    text_font=text_font,
+    label_width=label_width,
+    widget_width=widget_width,
+    subframe_correction_factor=subframe_correction_factor,
+    first_level_frame_font_size=first_level_frame_font_size,
+    second_level_frame_font_size=second_level_frame_font_size,
+    t_func=t,
+    browse_dir_callback=browse_dir,
+    toggle_sep_frame_callback=toggle_sep_frame,
+    toggle_keep_series_frame_callback=toggle_keep_series_frame,
+    toggle_vis_frame_callback=toggle_vis_frame,
+    toggle_exp_frame_callback=toggle_exp_frame,
+    open_keep_series_species_callback=open_keep_series_species_selection,
+    start_postprocess_callback=start_postprocess,
+)
 
 # set minsize for all rows inside labelframes...
 for frame in [fst_step, snd_step, cls_frame, img_frame, vid_frame, fth_step, sep_frame, keep_series_frame, exp_frame, vis_frame]:
