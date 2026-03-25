@@ -11,6 +11,25 @@ of callback functions, and return a result code string.
 import re
 from typing import Callable, Iterable, Optional
 
+# Pre-compiled tqdm progress bar patterns (used in both parsers).
+_RE_TQDM_TIMES = re.compile(r"(\[.*?\])")
+_RE_TQDM_BAR = re.compile(r"^[^\/]*[^[^ ]*")
+_RE_PERCENTAGE = re.compile(r"\d*%")
+_RE_CURRENT_IT = re.compile(r"\d*\/")
+_RE_TOTAL_IT = re.compile(r"\/\d*")
+_RE_ELAPSED = re.compile(r"(?<=\[)(.*)(?=<)")
+_RE_TIME_LEFT = re.compile(r"(?<=<)(.*)(?=,)")
+_RE_SPEED = re.compile(r"(?<=,)(.*)(?=])")
+
+# Warning patterns from MegaDetector that are not actionable and should NOT
+# be written to the warning log.
+_WARNING_EXCLUSIONS = (
+    "could not determine MegaDetector version",
+    "no metadata for unknown detector version",
+    "using user-supplied image size",
+    "already exists and will be overwritten",
+)
+
 
 def parse_detection_stdout(
     stdout_lines: Iterable[str],
@@ -52,13 +71,6 @@ def parse_detection_stdout(
     GPU_param = "Unknown"
     extracting_frames_mode = False
 
-    _WARNING_EXCLUSIONS = (
-        "could not determine MegaDetector version",
-        "no metadata for unknown detector version",
-        "using user-supplied image size",
-        "already exists and will be overwritten",
-    )
-
     for line in stdout_lines:
         log_line(line.rstrip())
 
@@ -74,7 +86,8 @@ def parse_detection_stdout(
             return "no_frames"
         if line.startswith("UnicodeEncodeError:"):
             emit_error(message="UnicodeEncodeError: Unparsable special character in filename",
-                       process=f"{data_type}_det")
+                       process=f"{data_type}_det",
+                       previous_processed_img=previous_processed_img)
             return "unicode_error"
 
         # track last successfully processed image (for unicode error messages)
@@ -112,14 +125,14 @@ def parse_detection_stdout(
             GPU_param = "GPU"
         elif '%' in line[0:4]:
             # parse tqdm progress bar
-            times = re.search(r"(\[.*?\])", line)[1]
-            progress_bar = re.search(r"^[^\/]*[^[^ ]*", line.replace(times, ""))[0]
-            percentage = re.search(r"\d*%", progress_bar)[0][:-1]
-            current_im = re.search(r"\d*\/", progress_bar)[0][:-1]
-            total_im = re.search(r"\/\d*", progress_bar)[0][1:]
-            elapsed_time = re.search(r"(?<=\[)(.*)(?=<)", times)[1]
-            time_left = re.search("(?<=<)(.*)(?=,)", times)[1]
-            processing_speed = re.search("(?<=,)(.*)(?=])", times)[1].strip()
+            times = _RE_TQDM_TIMES.search(line)[1]
+            progress_bar = _RE_TQDM_BAR.search(line.replace(times, ""))[0]
+            percentage = _RE_PERCENTAGE.search(progress_bar)[0][:-1]
+            current_im = _RE_CURRENT_IT.search(progress_bar)[0][:-1]
+            total_im = _RE_TOTAL_IT.search(progress_bar)[0][1:]
+            elapsed_time = _RE_ELAPSED.search(times)[1]
+            time_left = _RE_TIME_LEFT.search(times)[1]
+            processing_speed = _RE_SPEED.search(times)[1].strip()
 
             emit_progress(pct=float(percentage),
                           message=f"Processing: {current_im}/{total_im}",
@@ -199,14 +212,14 @@ def parse_classification_stdout(
             GPU_param = "GPU"
         elif '%' in line[0:4]:
             # parse tqdm progress bar
-            times = re.search(r"(\[.*?\])", line)[1]
-            progress_bar = re.search(r"^[^\/]*[^[^ ]*", line.replace(times, ""))[0]
-            percentage = re.search(r"\d*%", progress_bar)[0][:-1]
-            current_im = re.search(r"\d*\/", progress_bar)[0][:-1]
-            total_im = re.search(r"\/\d*", progress_bar)[0][1:]
-            elapsed_time = re.search(r"(?<=\[)(.*)(?=<)", times)[1]
-            time_left = re.search("(?<=<)(.*)(?=,)", times)[1]
-            processing_speed = re.search("(?<=,)(.*)(?=])", times)[1].strip()
+            times = _RE_TQDM_TIMES.search(line)[1]
+            progress_bar = _RE_TQDM_BAR.search(line.replace(times, ""))[0]
+            percentage = _RE_PERCENTAGE.search(progress_bar)[0][:-1]
+            current_im = _RE_CURRENT_IT.search(progress_bar)[0][:-1]
+            total_im = _RE_TOTAL_IT.search(progress_bar)[0][1:]
+            elapsed_time = _RE_ELAPSED.search(times)[1]
+            time_left = _RE_TIME_LEFT.search(times)[1]
+            processing_speed = _RE_SPEED.search(times)[1].strip()
 
             emit_progress(pct=float(percentage),
                           message=f"Classifying: {current_im}/{total_im}",
