@@ -14,6 +14,21 @@ from typing import Any, Dict, List, Tuple
 import requests  # type: ignore[import-untyped]
 
 
+def taxon_mapping_csv_present(base_path: str, cls_model_name: str) -> bool:
+    """Check whether a taxon-mapping.csv exists for the given classifier model.
+
+    Args:
+        base_path: Root AddaxAI directory.
+        cls_model_name: Name of the classification model subdirectory.
+
+    Returns:
+        True if the CSV file exists.
+    """
+    return os.path.isfile(
+        os.path.join(base_path, "models", "cls", cls_model_name, "taxon-mapping.csv")
+    )
+
+
 def fetch_known_models(root_dir: str) -> List[str]:
     """List known model subdirectories, sorted alphabetically.
 

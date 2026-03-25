@@ -10,11 +10,14 @@ both local and cloud-based inference.
 
 import datetime
 import json
+import logging
 import os
 import signal
 import sys
 from subprocess import Popen
 from typing import Any, Dict
+
+logger = logging.getLogger(__name__)
 
 
 def cancel_subprocess(process: Popen) -> None:
@@ -103,3 +106,38 @@ def imitate_object_detection_for_full_image_classifier(chosen_folder: str) -> No
     json_filename = os.path.join(chosen_folder, "image_recognition_file.json")
     with open(json_filename, "w") as f:
         json.dump(result, f, indent=4)
+
+
+def extract_label_map_from_model(model_file: str) -> Dict[Any, str]:
+    """Load a detection model and extract its class label map.
+
+    Imports PTDetector, loads the model on CPU, reads model.names,
+    and returns the label map dict. The detector is deleted after
+    extraction to free memory.
+
+    Args:
+        model_file: Path to the model weights file (.pt).
+
+    Returns:
+        Dictionary mapping class IDs to class name strings.
+
+    Raises:
+        Exception: If the model cannot be loaded or class names cannot
+            be read. The caller is responsible for showing any error UI.
+    """
+    from cameratraps.megadetector.detection.pytorch_detector import PTDetector
+
+    detector = PTDetector(model_file, force_cpu=True)
+
+    try:
+        label_map = {}  # type: Dict[Any, str]
+        for id in detector.model.names:
+            label_map[id] = detector.model.names[id]
+    except Exception as error:
+        logger.error("Failed to extract label map: %s", error, exc_info=True)
+        del detector
+        raise
+
+    del detector
+    logger.debug("Label map: %s", label_map)
+    return label_map

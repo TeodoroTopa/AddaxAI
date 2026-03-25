@@ -180,11 +180,13 @@ from addaxai.core.config import (load_global_vars, write_global_vars,
                                   load_model_vars_for)
 from addaxai.core.platform import get_python_interpreter
 from addaxai.models.deploy import (switch_yolov5_version, cancel_subprocess,
-                                    imitate_object_detection_for_full_image_classifier)
+                                    imitate_object_detection_for_full_image_classifier,
+                                    extract_label_map_from_model as _extract_label_map)
 from addaxai.models.registry import (is_first_startup, remove_first_startup_file,
                                       environment_needs_downloading,
                                       distribute_individual_model_jsons,
-                                      set_up_unknown_model)
+                                      set_up_unknown_model,
+                                      taxon_mapping_csv_present as _taxon_mapping_csv_present)
 from addaxai.i18n import init as i18n_init, t, set_language as i18n_set_language, lang_idx as i18n_lang_idx
 from addaxai.ui.widgets.buttons import GreyTopButton
 from addaxai.ui.widgets.species_selection import SpeciesSelectionFrame
@@ -2588,7 +2590,10 @@ def write_model_vars(model_type="cls", new_values = None):
 
 # check if there is a taxonomic csv file
 def taxon_mapping_csv_present():
-    return os.path.isfile(os.path.join(AddaxAI_files, "models", "cls", var_cls_model.get(), "taxon-mapping.csv"))
+    return _taxon_mapping_csv_present(
+        base_path=AddaxAI_files,
+        cls_model_name=var_cls_model.get(),
+    )
 
 # return the dataframe if there is a taxonomic csv file
 def fetch_taxon_mapping_df():
@@ -4982,25 +4987,9 @@ def browse_file(var, var_short, var_path, dsp, filetype, cut_off_length, options
 
 # extract label map from custom model
 def extract_label_map_from_model(model_file):
-    # log
-    logger.debug("EXECUTED: %s", sys._getframe().f_code.co_name)
-
-    # import module from cameratraps dir
-    from cameratraps.megadetector.detection.pytorch_detector import PTDetector
-
-    # load model
-    label_map_detector = PTDetector(model_file, force_cpu = True)
-
-    # fetch classes
     try:
-        CUSTOM_DETECTOR_LABEL_MAP = {}
-        for id in label_map_detector.model.names:
-            CUSTOM_DETECTOR_LABEL_MAP[id] = label_map_detector.model.names[id]
+        return _extract_label_map(model_file)
     except Exception as error:
-        # log error
-        logger.error("ERROR: %s", error, exc_info=True)
-
-        # show error
         mb.showerror(title=t('error'),
                      message=["An error has occurred when trying to extract classes", "Se ha producido un error al intentar extraer las clases",
                               "Une erreur est survenue lors de l'extraction des classes"][i18n_lang_idx()] +
@@ -5009,15 +4998,7 @@ def extract_label_map_from_model(model_file):
                                  ".\n\nIntentará continuar y producir el archivo json de salida, pero las características de post-procesamiento de AddaxAI no funcionarán.",
                                  ".\n\nUne tentative de poursuivre et de générer le fichier de sortie JSON sera effecutée, mais les fonctionnalités de post-traitement d'AddaxAI ne fonctionneront pas."][i18n_lang_idx()],
                      detail=traceback.format_exc())
-
-    # delete and free up memory
-    del label_map_detector
-
-    # log
-    logger.debug("Label map: %s", CUSTOM_DETECTOR_LABEL_MAP)
-
-    # return label map
-    return CUSTOM_DETECTOR_LABEL_MAP
+        return {}
 
 
 
