@@ -24,6 +24,10 @@ from typing import Any, Callable, Dict, List, Optional
 
 from addaxai.core.config import load_model_vars_for
 from addaxai.core.event_types import (
+    CLASSIFY_ERROR,
+    CLASSIFY_FINISHED,
+    CLASSIFY_PROGRESS,
+    CLASSIFY_STARTED,
     DEPLOY_CANCELLED,
     DEPLOY_FINISHED,
     DEPLOY_PROGRESS,
@@ -38,9 +42,13 @@ from addaxai.models.deploy import (
     imitate_object_detection_for_full_image_classifier,
     switch_yolov5_version,
 )
+from addaxai.models.registry import taxon_mapping_csv_present
 from addaxai.orchestration.callbacks import OrchestratorCallbacks
-from addaxai.orchestration.context import DeployConfig
-from addaxai.orchestration.stdout_parser import parse_detection_stdout
+from addaxai.orchestration.context import ClassifyConfig, DeployConfig
+from addaxai.orchestration.stdout_parser import (
+    parse_classification_stdout,
+    parse_detection_stdout,
+)
 from addaxai.utils.json_ops import append_to_json, make_json_absolute
 
 logger = logging.getLogger(__name__)
@@ -488,3 +496,225 @@ def run_detection(
         return DetectionResult(success=False, json_path=None,
                                error_code="cancelled",
                                error_message="User cancelled")
+
+
+# ============================================================================
+# ClassificationResult
+# ============================================================================
+
+@dataclasses.dataclass
+class ClassificationResult:
+    """Result returned by run_classification().
+
+    Attributes:
+        success:       True if classification completed without error.
+        json_path:     Path to the recognition JSON that was classified, or None.
+        error_code:    Short machine-readable code: "no_crops", or None on success.
+        error_message: Human-readable description of the error, or None.
+    """
+    success: bool
+    json_path: Optional[str]
+    error_code: Optional[str]
+    error_message: Optional[str]
+
+
+# ============================================================================
+# run_classification
+# ============================================================================
+
+def run_classification(
+    config: ClassifyConfig,
+    callbacks: OrchestratorCallbacks,
+    json_fpath: str,
+    data_type: str,
+    cancel_func_factory: Callable[[Any], Callable[[], None]],
+    simple_mode: bool = False,
+) -> ClassificationResult:
+    """Run species classification on MegaDetector detections.
+
+    Args:
+        config:              Classification configuration (paths, thresholds, flags).
+        callbacks:           Injected callbacks for UI interaction.
+        json_fpath:          Path to the MegaDetector recognition JSON to classify.
+        data_type:           "img" for images, "vid" for videos.
+        cancel_func_factory: Called with the Popen subprocess instance after launch;
+                             must return a zero-argument callable that cancels the
+                             subprocess.  The returned callable is forwarded as
+                             cancel_func to emit_progress.
+        simple_mode:         True when running in simplified (beginner) mode.
+                             Overrides thresholds with model-default values.
+
+    Returns:
+        ClassificationResult — check .success and .error_code for outcome.
+    """
+    logger.debug("EXECUTED: run_classification")
+
+    # emit started event
+    event_bus.emit(CLASSIFY_STARTED, process=f"{data_type}_cls")
+
+    # show user it's loading
+    callbacks.update_ui()
+    event_bus.emit(CLASSIFY_PROGRESS, pct=0.0, message="Loading classification model",
+                   process=f"{data_type}_cls", status="load")
+
+    # load model-specific variables
+    model_vars = load_model_vars_for(config.base_path, "cls", config.cls_model_name)
+    cls_model_fname = model_vars["model_fname"]
+    cls_model_type = model_vars["type"]
+    cls_model_fpath = os.path.join(
+        config.base_path, "models", "cls", config.cls_model_name, cls_model_fname)
+
+    # check if taxonomic fallback should be the default
+    taxon_mapping_csv_is_present = taxon_mapping_csv_present(
+        config.base_path, config.cls_model_name)
+    taxon_mapping_is_default = model_vars.get("var_tax_fallback_default", False)
+
+    # pick OS-specific conda environment
+    if os.name == 'nt':
+        cls_model_env = model_vars.get("env-windows", model_vars["env"])
+    elif platform.system() == 'Darwin':
+        cls_model_env = model_vars.get("env-macos", model_vars["env"])
+    else:
+        cls_model_env = model_vars.get("env-linux", model_vars["env"])
+
+    # resolve parameter values (simple_mode overrides config thresholds)
+    cls_tax_fallback = False
+    cls_tax_levels_idx = 0
+    if simple_mode:
+        cls_disable_GPU = False
+        cls_detec_thresh = model_vars["var_cls_detec_thresh_default"]
+        cls_class_thresh = model_vars["var_cls_class_thresh_default"]
+        cls_animal_smooth = False
+        if taxon_mapping_csv_is_present:
+            if taxon_mapping_is_default:
+                cls_tax_fallback = True
+    else:
+        cls_disable_GPU = config.disable_gpu
+        cls_detec_thresh = config.cls_detec_thresh
+        cls_class_thresh = config.cls_class_thresh
+        cls_animal_smooth = config.smooth_cls_animal
+        if taxon_mapping_csv_is_present:
+            cls_tax_fallback = config.tax_fallback
+            cls_tax_levels_idx = model_vars["var_tax_levels_idx"]
+
+    # init paths
+    python_executable = get_python_interpreter(config.base_path, cls_model_env)
+    inference_script = os.path.join(
+        config.base_path, "AddaxAI", "classification_utils", "model_types",
+        cls_model_type, "classify_detections.py")
+
+    # create command argument list
+    command_args = []
+    command_args.append(python_executable)
+    command_args.append(inference_script)
+    command_args.append(config.base_path)
+    command_args.append(cls_model_fpath)
+    command_args.append(str(cls_detec_thresh))
+    command_args.append(str(cls_class_thresh))
+    command_args.append(str(cls_animal_smooth))
+    command_args.append(json_fpath)
+    if config.temp_frame_folder:
+        command_args.append(config.temp_frame_folder)
+    else:
+        command_args.append("None")
+    command_args.append(str(cls_tax_fallback))
+    command_args.append(str(cls_tax_levels_idx))
+
+    # adjust command for unix OS
+    if os.name != 'nt':
+        command_args = "'" + "' '".join(command_args) + "'"  # type: ignore[assignment]
+
+    # prepend with OS-specific GPU/env commands
+    if os.name == 'nt':
+        if cls_disable_GPU:
+            command_args = ['set CUDA_VISIBLE_DEVICES="" &'] + command_args  # type: ignore[operator]
+    elif platform.system() == 'Darwin':
+        command_args = "export PYTORCH_ENABLE_MPS_FALLBACK=1 && " + command_args  # type: ignore[operator]
+    else:
+        if cls_disable_GPU:
+            command_args = "CUDA_VISIBLE_DEVICES='' " + command_args  # type: ignore[operator]
+        else:
+            command_args = "export PYTORCH_ENABLE_MPS_FALLBACK=1 && " + command_args  # type: ignore[operator]
+
+    logger.debug("Command: %s", command_args)
+
+    # launch subprocess
+    if os.name == 'nt':
+        p = Popen(command_args,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.STDOUT,
+                  bufsize=1,
+                  shell=True,
+                  universal_newlines=True)
+    else:
+        p = Popen(command_args,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.STDOUT,
+                  bufsize=1,
+                  shell=True,
+                  universal_newlines=True,
+                  preexec_fn=os.setsid)  # type: ignore[attr-defined]
+
+    # obtain cancel function now that we have the process
+    cancel_func = cancel_func_factory(p)
+
+    # smooth-output file path (same directory as the recognition JSON)
+    smooth_output_file = os.path.join(os.path.dirname(json_fpath), "smooth-output.txt")
+
+    def _smooth_handler(smooth_output_line: str) -> None:
+        with open(smooth_output_file, 'a+') as f:
+            f.write(f"{smooth_output_line}\n")
+
+    def _emit_progress(**kwargs: Any) -> None:
+        event_bus.emit(CLASSIFY_PROGRESS, **kwargs)
+
+    def _emit_error(**kwargs: Any) -> None:
+        event_bus.emit(CLASSIFY_ERROR, **kwargs)
+
+    # parse subprocess stdout
+    parse_result = parse_classification_stdout(
+        stdout_lines=p.stdout,
+        data_type=data_type,
+        update_ui=callbacks.update_ui,
+        emit_progress=_emit_progress,
+        emit_error=_emit_error,
+        log_line=logger.info,
+        smooth_handler=_smooth_handler,
+        cancel_func=cancel_func,
+    )
+
+    # handle no_crops result
+    if parse_result == "no_crops":
+        callbacks.on_info(
+            t('information'),
+            ["There are no animal detections that meet the criteria. You either "
+             "have selected images without any animals present, or you have set "
+             "your detection confidence threshold to high.",
+             "No hay detecciones de animales que cumplan los criterios. O bien ha "
+             "seleccionado imágenes sin presencia de animales, o bien ha establecido "
+             "el umbral de confianza de detección en alto.",
+             "Aucune détection d'animal ne rencontre les critères. Vous avez soit "
+             "sélectionner des images sans animaux présents, ou vous avez régler le "
+             "seuil de confiance de détection trop haut."
+             ][config.lang_idx],
+        )
+        event_bus.emit(CLASSIFY_PROGRESS, pct=100.0, message="Classification complete",
+                       process=f"{data_type}_cls", status="done",
+                       time_ela="", speed="")
+        event_bus.emit(CLASSIFY_FINISHED, results_path=json_fpath,
+                       process=f"{data_type}_cls")
+        callbacks.update_ui()
+        return ClassificationResult(
+            success=False, json_path=None,
+            error_code="no_crops",
+            error_message="No animal detections that meet the criteria",
+        )
+
+    # emit finished event
+    event_bus.emit(CLASSIFY_FINISHED, results_path=json_fpath, process=f"{data_type}_cls")
+    callbacks.update_ui()
+
+    return ClassificationResult(
+        success=True, json_path=json_fpath,
+        error_code=None, error_message=None,
+    )
