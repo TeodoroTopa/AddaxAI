@@ -30,6 +30,8 @@ class HITLWindow:
         self.app_state = app_state
         self._canvas_ref: Optional[Any] = None
         self._current_image_path: Optional[str] = None
+        self.lbl_hitl_main: Optional[Any] = None
+        self.btn_hitl_main: Optional[Any] = None
 
     def load_annotations(self, data: Dict[str, Any]) -> None:
         """Load annotation data from recognition JSON.
@@ -66,3 +68,38 @@ class HITLWindow:
         self._current_image_path = None
         if self._canvas_ref:
             self._canvas_ref.delete("all")
+
+    def build_widgets(
+        self,
+        start_hitl_callback: Callable[[], None],
+        t_func: Callable[[str], str],
+    ) -> None:
+        """Construct and grid HITL label and button widgets.
+
+        Args:
+            start_hitl_callback: Callback function for the start/continue button.
+            t_func: Translation function t(key) for i18n.
+        """
+        try:
+            from tkinter import Button, Label
+        except ImportError:
+            # For unit tests that don't have tkinter
+            return
+
+        # human-in-the-loop
+        row_hitl_main = 0
+        self.lbl_hitl_main = Label(
+            master=self.parent_frame,
+            text=t_func('lbl_hitl_main'),
+            width=1,
+            anchor="w"
+        )
+        self.lbl_hitl_main.grid(row=row_hitl_main, sticky='nesw', pady=2)
+
+        self.btn_hitl_main = Button(
+            master=self.parent_frame,
+            text=t_func('start'),
+            width=1,
+            command=start_hitl_callback
+        )
+        self.btn_hitl_main.grid(row=row_hitl_main, column=1, sticky='nesw', padx=5)

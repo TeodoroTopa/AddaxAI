@@ -7053,8 +7053,10 @@ def set_language():
     update_ent_text(ent_nth_frame, t('eg') + ": 1")
     btn_start_deploy.configure(text=t('btn_start_deploy'))
     trd_step.configure(text=" " + t('trd_step') + " ")
-    lbl_hitl_main.configure(text=t('lbl_hitl_main'))
-    btn_hitl_main.configure(text=t('start'))
+    if hitl_view.lbl_hitl_main:
+        hitl_view.lbl_hitl_main.configure(text=t('lbl_hitl_main'))
+    if hitl_view.btn_hitl_main:
+        hitl_view.btn_hitl_main.configure(text=t('start'))
     fth_step.configure(text=" " + t('fth_step') + " ")
     lbl_output_dir.configure(text=t('lbl_output_dir'))
     btn_output_dir.configure(text=t('browse'))
@@ -7157,10 +7159,12 @@ def update_frame_states():
         status = get_hitl_var_in_json(path_to_image_json)
         if status == "never-started":
             enable_frame(trd_step)
-            btn_hitl_main.configure(text = t('start'))
+            if hitl_view.btn_hitl_main:
+                hitl_view.btn_hitl_main.configure(text = t('start'))
         elif status == "in-progress":
             enable_frame(trd_step)
-            btn_hitl_main.configure(text = t('continue'))
+            if hitl_view.btn_hitl_main:
+                hitl_view.btn_hitl_main.configure(text = t('continue'))
         elif status == "done":
             complete_frame(trd_step)
     else:
@@ -7346,40 +7350,40 @@ def toggle_cls_frame():
 
     # only enable cls_frame if snd_step is also enabled and user didn't choose None
     if var_cls_model.get() != t('none') and snd_step_enabled:
-        cls_frame.grid(row=cls_frame_row, column=0, columnspan=2, sticky = 'ew')
-        enable_widgets(cls_frame)
+        deploy_view.cls_frame.grid(row=cls_frame_row, column=0, columnspan=2, sticky='ew')
+        enable_widgets(deploy_view.cls_frame)
         toggle_checkpoint_freq()
-        cls_frame.configure(fg='black')
+        deploy_view.cls_frame.configure(fg='black')
     else:
-        disable_widgets(cls_frame)
-        cls_frame.configure(fg='grey80')
-        cls_frame.grid_forget()
+        disable_widgets(deploy_view.cls_frame)
+        deploy_view.cls_frame.configure(fg='grey80')
+        deploy_view.cls_frame.grid_forget()
     resize_canvas_to_content()
 
 # toggle image subframe
 def toggle_img_frame():
     if var_process_img.get():
-        img_frame.grid(row=img_frame_row, column=0, columnspan=2, sticky = 'ew')
-        enable_widgets(img_frame)
+        deploy_view.img_frame.grid(row=img_frame_row, column=0, columnspan=2, sticky='ew')
+        enable_widgets(deploy_view.img_frame)
         toggle_checkpoint_freq()
-        img_frame.configure(fg='black')
+        deploy_view.img_frame.configure(fg='black')
     else:
-        disable_widgets(img_frame)
-        img_frame.configure(fg='grey80')
-        img_frame.grid_forget()
+        disable_widgets(deploy_view.img_frame)
+        deploy_view.img_frame.configure(fg='grey80')
+        deploy_view.img_frame.grid_forget()
     resize_canvas_to_content()
 
 # toggle video subframe
 def toggle_vid_frame():
     if var_process_vid.get():
-        vid_frame.grid(row=vid_frame_row, column=0, columnspan=2, sticky='ew')
-        enable_widgets(vid_frame)
+        deploy_view.vid_frame.grid(row=vid_frame_row, column=0, columnspan=2, sticky='ew')
+        enable_widgets(deploy_view.vid_frame)
         toggle_nth_frame()
-        vid_frame.configure(fg='black')
+        deploy_view.vid_frame.configure(fg='black')
     else:
-        disable_widgets(vid_frame)
-        vid_frame.configure(fg='grey80')
-        vid_frame.grid_forget()
+        disable_widgets(deploy_view.vid_frame)
+        deploy_view.vid_frame.configure(fg='grey80')
+        deploy_view.vid_frame.grid_forget()
     resize_canvas_to_content()
 
 # convert frame to completed
@@ -7396,9 +7400,9 @@ def complete_frame(frame):
     if any_step:
         frame.configure(fg=green_primary)
     if snd_step:
-        cls_frame.configure(relief = 'groove')
-        img_frame.configure(relief = 'groove')
-        vid_frame.configure(relief = 'groove')
+        deploy_view.cls_frame.configure(relief='groove')
+        deploy_view.img_frame.configure(relief='groove')
+        deploy_view.vid_frame.configure(relief='groove')
 
     if trd_step or fst_step:
         # add check mark
@@ -7406,8 +7410,9 @@ def complete_frame(frame):
         lbl_check_mark.image = state.check_mark_one_row
         lbl_check_mark.grid(row=0, column=0, rowspan=15, columnspan=2, sticky='nesw')
         if trd_step:
-            btn_hitl_main.configure(text=t('new_session'), state = NORMAL)
-            btn_hitl_main.lift()
+            if hitl_view.btn_hitl_main:
+                hitl_view.btn_hitl_main.configure(text=t('new_session'), state = NORMAL)
+                hitl_view.btn_hitl_main.lift()
         if fst_step:
             btn_choose_folder.configure(text=t('change_folder') + "?", state = NORMAL)
             btn_choose_folder.lift()
@@ -7448,11 +7453,11 @@ def enable_frame(frame):
         frame.configure(fg=green_primary)
     if snd_step:
         toggle_cls_frame()
-        cls_frame.configure(relief = 'solid')
+        deploy_view.cls_frame.configure(relief='solid')
         toggle_img_frame()
-        img_frame.configure(relief = 'solid')
+        deploy_view.img_frame.configure(relief='solid')
         toggle_vid_frame()
-        vid_frame.configure(relief = 'solid')
+        deploy_view.vid_frame.configure(relief='solid')
         toggle_image_size_for_deploy()
     if fth_step:
         toggle_sep_frame()
@@ -7484,15 +7489,15 @@ def disable_frame(frame):
     frame.configure(relief = 'flat')
     if frame.cget('text').startswith(' ' + t('step') + ' 2'):
         # snd_step only
-        disable_widgets(cls_frame)
-        cls_frame.configure(fg='grey80')
-        cls_frame.configure(relief = 'flat')
-        disable_widgets(img_frame)
-        img_frame.configure(fg='grey80')
-        img_frame.configure(relief = 'flat')
-        disable_widgets(vid_frame)
-        vid_frame.configure(fg='grey80')
-        vid_frame.configure(relief = 'flat')
+        disable_widgets(deploy_view.cls_frame)
+        deploy_view.cls_frame.configure(fg='grey80')
+        deploy_view.cls_frame.configure(relief='flat')
+        disable_widgets(deploy_view.img_frame)
+        deploy_view.img_frame.configure(fg='grey80')
+        deploy_view.img_frame.configure(relief='flat')
+        disable_widgets(deploy_view.vid_frame)
+        deploy_view.vid_frame.configure(fg='grey80')
+        deploy_view.vid_frame.configure(relief='flat')
     if frame.cget('text').startswith(' ' + t('step') + ' 4'):
         # fth_step only
         disable_widgets(sep_frame)
@@ -7954,260 +7959,70 @@ det_models = fetch_known_models(DET_DIR)
 dpd_options_model = [det_models + ["Custom model"], det_models + ["Otro modelo"], det_models + ["Modèle personnalisé"]]
 state.dpd_options_model = dpd_options_model  # type: ignore[assignment]
 
-# choose detector
-row_model = 0
-lbl_model = Label(master=snd_step, text=t('lbl_model'), width=1, anchor="w")
-lbl_model.grid(row=row_model, sticky='nesw', pady=2)
-var_det_model.set(state.dpd_options_model[i18n_lang_idx()][global_vars["var_det_model_idx"]]) # take idx instead of string
-var_det_model_short.set(global_vars["var_det_model_short"])
-var_det_model_path.set(global_vars["var_det_model_path"])
-dpd_model = OptionMenu(snd_step, var_det_model, *state.dpd_options_model[i18n_lang_idx()], command=model_options)
-dpd_model.configure(width=1)
-dpd_model.grid(row=row_model, column=1, sticky='nesw', padx=5)
-dsp_model = Label(master=snd_step, textvariable=var_det_model_short, fg=green_primary)
-if var_det_model_short.get() != "":
-    dsp_model.grid(column=0, row=row_model, sticky='e')
-
 # check if user has classifiers installed
 cls_models = fetch_known_models(CLS_DIR)
 dpd_options_cls_model = [["None"] + cls_models, ["Ninguno"] + cls_models, ["Aucun"] + cls_models]
 state.dpd_options_cls_model = dpd_options_cls_model  # type: ignore[assignment]
 
-# use classifier
-row_cls_model = 1
-lbl_cls_model = Label(snd_step, text=t('lbl_cls_model'), width=1, anchor="w")
-lbl_cls_model.grid(row=row_cls_model, sticky='nesw', pady=2)
-var_cls_model.set(state.dpd_options_cls_model[i18n_lang_idx()][global_vars["var_cls_model_idx"]]) # take idx instead of string
-dpd_cls_model = OptionMenu(snd_step, var_cls_model, *state.dpd_options_cls_model[i18n_lang_idx()], command=model_cls_animal_options)
-dpd_cls_model.configure(width=1, state=DISABLED)
-dpd_cls_model.grid(row=row_cls_model, column=1, sticky='nesw', padx=5, pady=2)
-
-# set global model vars for startup
-model_vars = load_model_vars()
-
-## classification option frame (hidden by default)
-cls_frame_row = 2
-cls_frame = LabelFrame(snd_step, text=" ↳ " + t('cls_frame') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, borderwidth=1, fg="black")  # type: ignore[arg-type]
-cls_frame.configure(font=(text_font, second_level_frame_font_size, "bold"))
-cls_frame.grid(row=cls_frame_row, column=0, columnspan=2, sticky = 'ew')
-cls_frame.columnconfigure(0, weight=1, minsize= label_width - subframe_correction_factor)
-cls_frame.columnconfigure(1, weight=1, minsize= widget_width - subframe_correction_factor)
-cls_frame.grid_forget()
-
-# show model info
-row_btn_model_info = 1
-row_model_info = 0
-lbl_model_info = Label(master=cls_frame, text="     " + t('lbl_model_info'), width=1, anchor="w")
-lbl_model_info.grid(row=row_model_info, sticky='nesw', pady=2)
-btn_model_info = Button(master=cls_frame, text=t('show'), width=1, command=show_model_info)
-btn_model_info.grid(row=row_model_info, column=1, sticky='nesw', padx=5)
-
-# choose classes
-row_choose_classes = 1
-lbl_choose_classes = Label(master=cls_frame, text="     " + t('lbl_choose_classes'), width=1, anchor="w")
-lbl_choose_classes.grid(row=row_choose_classes, sticky='nesw', pady=2)
-btn_choose_classes = Button(master=cls_frame, text=t('select'), width=1, command=open_species_selection)
-btn_choose_classes.grid(row=row_choose_classes, column=1, sticky='nesw', padx=5)
-if var_cls_model.get() != t('none'):
-    dsp_choose_classes = Label(cls_frame, text = f"{len(model_vars.get('selected_classes', []))} of {len(model_vars.get('all_classes', []))}")
-else:
-    dsp_choose_classes = Label(cls_frame, text= "")
-dsp_choose_classes.grid(row=row_choose_classes, column=0, sticky='e', padx=0)
-dsp_choose_classes.configure(fg=green_primary)
-
-# threshold to classify detections
-row_cls_detec_thresh = 2
-lbl_cls_detec_thresh = Label(cls_frame, text="     " + t('lbl_cls_detec_thresh'), width=1, anchor="w")
-lbl_cls_detec_thresh.grid(row=row_cls_detec_thresh, sticky='nesw', pady=2)
-var_cls_detec_thresh.set(model_vars.get('var_cls_detec_thresh', 0.6))
-scl_cls_detec_thresh = Scale(cls_frame, from_=0.01, to=1, resolution=0.01, orient=HORIZONTAL,
-                             variable=var_cls_detec_thresh, showvalue=0, width=10, length=1, state=DISABLED,  # type: ignore[arg-type]
-                             command=lambda value: write_model_vars(new_values = {"var_cls_detec_thresh": str(value)}))
-scl_cls_detec_thresh.grid(row=row_cls_detec_thresh, column=1, sticky='ew', padx=10)
-dsp_cls_detec_thresh = Label(cls_frame, textvariable=var_cls_detec_thresh)
-dsp_cls_detec_thresh.grid(row=row_cls_detec_thresh, column=0, sticky='e', padx=0)
-dsp_cls_detec_thresh.configure(fg=green_primary)
-
-# threshold accept identifications
-row_cls_class_thresh = 3
-lbl_cls_class_thresh = Label(cls_frame, text="     " + t('lbl_cls_class_thresh'), width=1, anchor="w")
-lbl_cls_class_thresh.grid(row=row_cls_class_thresh, sticky='nesw', pady=2)
-var_cls_class_thresh.set(model_vars.get('var_cls_class_thresh', 0.5))
-scl_cls_class_thresh = Scale(cls_frame, from_=0.01, to=1, resolution=0.01, orient=HORIZONTAL,
-                             variable=var_cls_class_thresh, showvalue=0, width=10, length=1, state=DISABLED,  # type: ignore[arg-type]
-                             command=lambda value: write_model_vars(new_values = {"var_cls_class_thresh": value}))
-scl_cls_class_thresh.grid(row=row_cls_class_thresh, column=1, sticky='ew', padx=10)
-dsp_cls_class_thresh = Label(cls_frame, textvariable=var_cls_class_thresh)
-dsp_cls_class_thresh.grid(row=row_cls_class_thresh, column=0, sticky='e', padx=0)
-dsp_cls_class_thresh.configure(fg=green_primary)
-
-# Smoothen results
-row_smooth_cls_animal = 4
-lbl_smooth_cls_animal = Label(cls_frame, text="     " + t('lbl_smooth_cls_animal'), width=1, anchor="w")
-lbl_smooth_cls_animal.grid(row=row_smooth_cls_animal, sticky='nesw', pady=2)
-var_smooth_cls_animal.set(model_vars.get('var_smooth_cls_animal', False))
-chb_smooth_cls_animal = Checkbutton(cls_frame, variable=var_smooth_cls_animal, anchor="w", command = on_chb_smooth_cls_animal_change)
-chb_smooth_cls_animal.grid(row=row_smooth_cls_animal, column=1, sticky='nesw', padx=5)
-
-# taxonomic fallback checkbox (only visible if taxon mapping is present)
-row_tax_fallback = 5
-lbl_tax_fallback = Label(cls_frame, text="     " + t('lbl_tax_fallback'), width=1, anchor="w")
-var_tax_fallback.set(model_vars.get('var_tax_fallback', False))
-chb_tax_fallback = Checkbutton(cls_frame, variable=var_tax_fallback, anchor="w", command = toggle_tax_levels)
-
-# taxonomic fallbaock dropdown (only visible if taxon mapping is present)
-row_tax_levels = 6
-lbl_tax_levels = Label(cls_frame, text="     " + t('lbl_tax_levels'), width=1, anchor="w")
-var_tax_levels.set('dummy') # set dummy value to avoid error
-dpd_tax_levels = OptionMenu(cls_frame, var_tax_levels, ["dummy"])  # type: ignore[arg-type]
-dpd_tax_levels.configure(width=1, state=DISABLED)
-
-# make taxonomic fallback widgets visible if taxon mapping is present
-if taxon_mapping_csv_present():
-    toggle_tax_levels_dpd_options()
-    lbl_tax_fallback.grid(row=row_tax_fallback, sticky='nesw', pady=2)
-    chb_tax_fallback.grid(row=row_tax_fallback, column=1, sticky='nesw', padx=5)
-    toggle_tax_levels()
-
-# choose location for species net
-row_sppnet_location = 1
-lbl_sppnet_location = Label(master=cls_frame, text="     " + t('lbl_sppnet_location'), width=1, anchor="w")
-lbl_sppnet_location.grid(row=row_sppnet_location, sticky='nesw', pady=2)
-var_sppnet_location.set(dpd_options_sppnet_location[global_vars["var_sppnet_location_idx"]]) # take idx instead of string
-dpd_sppnet_location = OptionMenu(cls_frame, var_sppnet_location, *dpd_options_sppnet_location)
-dpd_sppnet_location.configure(width=1, state=DISABLED)
-# dpd_sppnet_location.grid(row=row_sppnet_location, column=1, sticky='nesw', padx=5, pady=2) # dont grid this by default
-
-# include subdirectories
-row_exclude_subs = 3
-lbl_exclude_subs = Label(snd_step, text=t('lbl_exclude_subs'), width=1, anchor="w")
-lbl_exclude_subs.grid(row=row_exclude_subs, sticky='nesw', pady=2)
-var_exclude_subs.set(global_vars['var_exclude_subs'])
-chb_exclude_subs = Checkbutton(snd_step, variable=var_exclude_subs, anchor="w")
-chb_exclude_subs.grid(row=row_exclude_subs, column=1, sticky='nesw', padx=5)
-
-# use custom image size
-row_use_custom_img_size_for_deploy = 4
-lbl_use_custom_img_size_for_deploy = Label(snd_step, text=t('lbl_use_custom_img_size_for_deploy'), width=1, anchor="w")
-lbl_use_custom_img_size_for_deploy.grid(row=row_use_custom_img_size_for_deploy, sticky='nesw', pady=2)
-var_use_custom_img_size_for_deploy.set(global_vars['var_use_custom_img_size_for_deploy'])
-chb_use_custom_img_size_for_deploy = Checkbutton(snd_step, variable=var_use_custom_img_size_for_deploy, command=toggle_image_size_for_deploy, anchor="w")
-chb_use_custom_img_size_for_deploy.grid(row=row_use_custom_img_size_for_deploy, column=1, sticky='nesw', padx=5)
-
-# specify custom image size (not grid by default)
-row_image_size_for_deploy = 5
-lbl_image_size_for_deploy = Label(snd_step, text=" ↳ " + t('lbl_image_size_for_deploy'), width=1, anchor="w")
-var_image_size_for_deploy.set(global_vars['var_image_size_for_deploy'])
-ent_image_size_for_deploy = tk.Entry(snd_step, textvariable=var_image_size_for_deploy, fg='grey', state=NORMAL, width=1)
-if var_image_size_for_deploy.get() == "":
-    ent_image_size_for_deploy.insert(0, t('eg') + ": 640")
-else:
-    ent_image_size_for_deploy.configure(fg='black')
-ent_image_size_for_deploy.bind("<FocusIn>", image_size_for_deploy_focus_in)
-ent_image_size_for_deploy.configure(state=DISABLED)
-
-# use absolute paths
-row_abs_path = 6
-lbl_abs_paths = Label(snd_step, text=t('lbl_abs_paths'), width=1, anchor="w")
-lbl_abs_paths.grid(row=row_abs_path, sticky='nesw', pady=2)
-var_abs_paths.set(global_vars['var_abs_paths'])
-chb_abs_paths = Checkbutton(snd_step, variable=var_abs_paths, command=abs_paths_warning, anchor="w")
-chb_abs_paths.grid(row=row_abs_path, column=1, sticky='nesw', padx=5)
-
-# use absolute paths
-row_disable_GPU = 7
-lbl_disable_GPU = Label(snd_step, text=t('lbl_disable_GPU'), width=1, anchor="w")
-lbl_disable_GPU.grid(row=row_disable_GPU, sticky='nesw', pady=2)
-var_disable_GPU.set(global_vars['var_disable_GPU'])
-chb_disable_GPU = Checkbutton(snd_step, variable=var_disable_GPU, anchor="w")
-chb_disable_GPU.grid(row=row_disable_GPU, column=1, sticky='nesw', padx=5)
-
-# process images
-row_process_img = 8
-lbl_process_img = Label(snd_step, text=t('lbl_process_img'), width=1, anchor="w")
-lbl_process_img.grid(row=row_process_img, sticky='nesw', pady=2)
-var_process_img.set(global_vars['var_process_img'])
-chb_process_img = Checkbutton(snd_step, variable=var_process_img, command=toggle_img_frame, anchor="w")
-chb_process_img.grid(row=row_process_img, column=1, sticky='nesw', padx=5)
-
-## image option frame (hidden by default)
-img_frame_row = 9
-img_frame = LabelFrame(snd_step, text=" ↳ " + t('img_frame') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, borderwidth=1, fg="grey80")  # type: ignore[arg-type]
-img_frame.configure(font=(text_font, second_level_frame_font_size, "bold"))
-img_frame.grid(row=img_frame_row, column=0, columnspan=2, sticky = 'ew')
-img_frame.columnconfigure(0, weight=1, minsize=label_width - subframe_correction_factor)
-img_frame.columnconfigure(1, weight=1, minsize=widget_width - subframe_correction_factor)
-img_frame.grid_forget()
-
-# use checkpoints
-row_use_checkpnts = 0
-lbl_use_checkpnts = Label(img_frame, text="     " + t('lbl_use_checkpnts'), pady=2, state=DISABLED, width=1, anchor="w")
-lbl_use_checkpnts.grid(row=row_use_checkpnts, sticky='nesw')
-var_use_checkpnts.set(global_vars['var_use_checkpnts'])
-chb_use_checkpnts = Checkbutton(img_frame, variable=var_use_checkpnts, command=toggle_checkpoint_freq, state=DISABLED, anchor="w")
-chb_use_checkpnts.grid(row=row_use_checkpnts, column=1, sticky='nesw', padx=5)
-
-# checkpoint frequency
-row_checkpoint_freq = 1
-lbl_checkpoint_freq = tk.Label(img_frame, text="        ↳ " + t('lbl_checkpoint_freq'), pady=2, state=DISABLED, width=1, anchor="w")
-lbl_checkpoint_freq.grid(row=row_checkpoint_freq, sticky='nesw')
-var_checkpoint_freq.set(global_vars['var_checkpoint_freq'])
-ent_checkpoint_freq = tk.Entry(img_frame, textvariable=var_checkpoint_freq, fg='grey', state=NORMAL, width=1)
-ent_checkpoint_freq.grid(row=row_checkpoint_freq, column=1, sticky='nesw', padx=5)
-if var_checkpoint_freq.get() == "":
-    ent_checkpoint_freq.insert(0, t('eg') + ": 10000")
-else:
-    ent_checkpoint_freq.configure(fg='black')
-ent_checkpoint_freq.bind("<FocusIn>", checkpoint_freq_focus_in)
-ent_checkpoint_freq.configure(state=DISABLED)
-
-# continue from checkpoint file
-row_cont_checkpnt = 2
-lbl_cont_checkpnt = Label(img_frame, text="     " + t('lbl_cont_checkpnt'), pady=2, state=DISABLED, width=1, anchor="w")
-lbl_cont_checkpnt.grid(row=row_cont_checkpnt, sticky='nesw')
-var_cont_checkpnt.set(global_vars['var_cont_checkpnt'])
-chb_cont_checkpnt = Checkbutton(img_frame, variable=var_cont_checkpnt, state=DISABLED, command=disable_chb_cont_checkpnt, anchor="w")
-chb_cont_checkpnt.grid(row=row_cont_checkpnt, column=1, sticky='nesw', padx=5)
-
-# process videos
-row_process_vid = 10
-lbl_process_vid = Label(snd_step, text=t('lbl_process_vid'), width=1, anchor="w")
-lbl_process_vid.grid(row=row_process_vid, sticky='nesw', pady=2)
-var_process_vid.set(global_vars['var_process_vid'])
-chb_process_vid = Checkbutton(snd_step, variable=var_process_vid, command=toggle_vid_frame, anchor="w")
-chb_process_vid.grid(row=row_process_vid, column=1, sticky='nesw', padx=5)
-
-## video option frame (disabled by default)
-vid_frame_row = 11
-vid_frame = LabelFrame(snd_step, text=" ↳ " + t('vid_frame') + " ", pady=2, padx=5, relief='solid', highlightthickness=5, font=100, borderwidth=1, fg="grey80")  # type: ignore[arg-type]
-vid_frame.configure(font=(text_font, second_level_frame_font_size, "bold"))
-vid_frame.grid(row=vid_frame_row, column=0, columnspan=2, sticky='ew')
-vid_frame.columnconfigure(0, weight=1, minsize=label_width - subframe_correction_factor)
-vid_frame.columnconfigure(1, weight=1, minsize=widget_width - subframe_correction_factor)
-vid_frame.grid_forget()
-
-# dont process all frames
-row_not_all_frames = 0
-lbl_not_all_frames = Label(vid_frame, text="     " + t('lbl_not_all_frames'), pady=2, state=DISABLED, width=1, anchor="w")
-lbl_not_all_frames.grid(row=row_not_all_frames, sticky='nesw')
-var_not_all_frames.set(global_vars['var_not_all_frames'])
-chb_not_all_frames = Checkbutton(vid_frame, variable=var_not_all_frames, command=toggle_nth_frame, state=DISABLED, anchor="w")
-chb_not_all_frames.grid(row=row_not_all_frames, column=1, sticky='nesw', padx=5)
-
-# process every nth frame
-row_nth_frame = 1
-lbl_nth_frame = tk.Label(vid_frame, text="        ↳ " + t('lbl_nth_frame'), pady=2, state=DISABLED, width=1, anchor="w")
-lbl_nth_frame.grid(row=row_nth_frame, sticky='nesw')
-var_nth_frame.set(global_vars['var_nth_frame'])
-ent_nth_frame = tk.Entry(vid_frame, textvariable=var_nth_frame, fg='grey' if var_nth_frame.get().isdecimal() else 'black', state=NORMAL, width=1)
-ent_nth_frame.grid(row=row_nth_frame, column=1, sticky='nesw', padx=5)
-if var_nth_frame.get() == "":
-    ent_nth_frame.insert(0, t('eg') + ": 1")
-    ent_nth_frame.configure(fg='grey')
-else:
-    ent_nth_frame.configure(fg='black')
-ent_nth_frame.bind("<FocusIn>", nth_frame_focus_in)
-ent_nth_frame.configure(state=DISABLED)
+# Build deployment widgets
+deploy_view.build_widgets(
+    global_vars=global_vars,
+    state=state,
+    dpd_options_model=dpd_options_model,
+    dpd_options_cls_model=dpd_options_cls_model,
+    dpd_options_sppnet_location=dpd_options_sppnet_location,
+    var_det_model=var_det_model,
+    var_det_model_short=var_det_model_short,
+    var_det_model_path=var_det_model_path,
+    var_cls_model=var_cls_model,
+    var_cls_detec_thresh=var_cls_detec_thresh,
+    var_cls_class_thresh=var_cls_class_thresh,
+    var_smooth_cls_animal=var_smooth_cls_animal,
+    var_tax_fallback=var_tax_fallback,
+    var_tax_levels=var_tax_levels,
+    var_sppnet_location=var_sppnet_location,
+    var_exclude_subs=var_exclude_subs,
+    var_use_custom_img_size_for_deploy=var_use_custom_img_size_for_deploy,
+    var_image_size_for_deploy=var_image_size_for_deploy,
+    var_abs_paths=var_abs_paths,
+    var_disable_GPU=var_disable_GPU,
+    var_process_img=var_process_img,
+    var_use_checkpnts=var_use_checkpnts,
+    var_checkpoint_freq=var_checkpoint_freq,
+    var_cont_checkpnt=var_cont_checkpnt,
+    var_process_vid=var_process_vid,
+    var_not_all_frames=var_not_all_frames,
+    var_nth_frame=var_nth_frame,
+    green_primary=green_primary,
+    text_font=text_font,
+    label_width=label_width,
+    widget_width=widget_width,
+    subframe_correction_factor=subframe_correction_factor,
+    first_level_frame_font_size=first_level_frame_font_size,
+    second_level_frame_font_size=second_level_frame_font_size,
+    i18n_lang_idx=i18n_lang_idx,
+    t_func=t,
+    model_options_callback=model_options,
+    model_cls_animal_options_callback=model_cls_animal_options,
+    show_model_info_callback=show_model_info,
+    open_species_selection_callback=open_species_selection,
+    on_chb_smooth_cls_animal_change_callback=on_chb_smooth_cls_animal_change,
+    toggle_tax_levels_callback=toggle_tax_levels,
+    toggle_tax_levels_dpd_options_callback=toggle_tax_levels_dpd_options,
+    taxon_mapping_csv_present_callback=taxon_mapping_csv_present,
+    toggle_image_size_for_deploy_callback=toggle_image_size_for_deploy,
+    image_size_for_deploy_focus_in_callback=image_size_for_deploy_focus_in,
+    abs_paths_warning_callback=abs_paths_warning,
+    toggle_img_frame_callback=toggle_img_frame,
+    checkpoint_freq_focus_in_callback=checkpoint_freq_focus_in,
+    toggle_checkpoint_freq_callback=toggle_checkpoint_freq,
+    disable_chb_cont_checkpnt_callback=disable_chb_cont_checkpnt,
+    toggle_vid_frame_callback=toggle_vid_frame,
+    nth_frame_focus_in_callback=nth_frame_focus_in,
+    fetch_known_models_callback=fetch_known_models,
+    load_model_vars_callback=load_model_vars,
+    write_model_vars_callback=write_model_vars,
+)
 
 # button start deploy
 row_btn_start_deploy = 12
@@ -8230,12 +8045,11 @@ trd_step.columnconfigure(1, weight=1, minsize=widget_width)
 # Instantiate HITLWindow view
 hitl_view = HITLWindow(trd_step, app_state=state)
 
-# human-in-the-loop
-row_hitl_main = 0
-lbl_hitl_main = Label(master=trd_step, text=t('lbl_hitl_main'), width=1, anchor="w")
-lbl_hitl_main.grid(row=row_hitl_main, sticky='nesw', pady=2)
-btn_hitl_main = Button(master=trd_step, text=t('start'), width=1, command = start_or_continue_hitl)
-btn_hitl_main.grid(row=row_hitl_main, column=1, sticky='nesw', padx=5)
+# Build HITL widgets
+hitl_view.build_widgets(
+    start_hitl_callback=start_or_continue_hitl,
+    t_func=t,
+)
 
 ### fourth step
 fth_step_row = 2
