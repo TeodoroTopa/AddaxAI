@@ -235,8 +235,8 @@ def _extract_archive(
         with zipfile.ZipFile(file_path, 'r') as zip_ref:
             total_files = len(zip_ref.namelist())
             progress_bar = tqdm(total=total_files, unit='file', desc="Extracting")
-            for member in zip_ref.namelist():
-                zip_ref.extract(member, path=dest_dir)
+            for zip_entry in zip_ref.namelist():
+                zip_ref.extract(zip_entry, path=dest_dir)
                 progress_bar.update(1)
                 if progress_callback is not None and total_files > 0:
                     progress_callback(progress_bar.n / total_files)
