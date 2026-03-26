@@ -1449,41 +1449,15 @@ def start_deploy(simple_mode = False):
 
     # check if there are any images or videos in the folder
     chosen_folder = var_choose_folder.get()
-    if simple_mode:
-        check_img_presence = True
-        check_vid_presence = True
-    else:
-        check_img_presence = var_process_img.get()
-        check_vid_presence = var_process_vid.get()
-    img_present = False
-    vid_present = False
-    if var_exclude_subs.get():
-        # non recursive
-        for f in os.listdir(chosen_folder):
-            if check_img_presence:
-                if f.lower().endswith(IMG_EXTENSIONS):
-                    img_present = True
-            if check_vid_presence:
-                if f.lower().endswith(VIDEO_EXTENSIONS):
-                    vid_present = True
-            if (img_present and vid_present) or \
-                (img_present and not check_vid_presence) or \
-                    (vid_present and not check_img_presence) or \
-                        (not check_img_presence and not check_vid_presence):
-                break
-    else:
-        # recursive
-        for main_dir, _, files in os.walk(chosen_folder):
-            for file in files:
-                if check_img_presence and file.lower().endswith(IMG_EXTENSIONS):
-                    img_present = True
-                if check_vid_presence and file.lower().endswith(VIDEO_EXTENSIONS):
-                    vid_present = True
-            if (img_present and vid_present) or \
-                (img_present and not check_vid_presence) or \
-                    (vid_present and not check_img_presence) or \
-                        (not check_img_presence and not check_vid_presence):
-                    break
+    from addaxai.orchestration.deploy_helpers import scan_media_presence
+    img_present, vid_present = scan_media_presence(
+        folder=chosen_folder,
+        check_img=True if simple_mode else var_process_img.get(),
+        check_vid=True if simple_mode else var_process_vid.get(),
+        exclude_subs=var_exclude_subs.get(),
+        img_extensions=IMG_EXTENSIONS,
+        vid_extensions=VIDEO_EXTENSIONS,
+    )
 
     # check if user selected to process either images or videos
     if not img_present and not vid_present:
@@ -1725,32 +1699,22 @@ def start_deploy(simple_mode = False):
         "var_sppnet_location_idx": dpd_options_sppnet_location.index(var_sppnet_location.get()),
     })
 
-    # simple_mode and advanced mode shared image settings
-    additional_img_options = ["--output_relative_filenames"]
-
-    # simple_mode and advanced mode shared video settings
-    additional_vid_options = ["--json_confidence_threshold=0.01"]
-    if state.timelapse_mode:
-        additional_vid_options.append("--include_all_processed_frames")
+    # create temp frame folder if classifying videos
     temp_frame_folder_created = False
-    if vid_present:
-        if var_cls_model.get() != t('none'):
-            temp_frame_folder_obj = tempfile.TemporaryDirectory()
-            temp_frame_folder_created = True
-            state.temp_frame_folder = temp_frame_folder_obj.name
-            additional_vid_options.append("--frame_folder=" + state.temp_frame_folder)
-            additional_vid_options.append("--keep_extracted_frames")
+    _temp_frame_folder_str = ""
+    if vid_present and var_cls_model.get() != t('none'):
+        temp_frame_folder_obj = tempfile.TemporaryDirectory()
+        temp_frame_folder_created = True
+        state.temp_frame_folder = temp_frame_folder_obj.name
+        _temp_frame_folder_str = state.temp_frame_folder
 
-
-    # if user deployed from simple mode everything will be default, so easy
     if simple_mode:
-
-        # simple mode specific image options
-        additional_img_options.append("--recursive")
-
-        # simple mode specific video options
-        additional_vid_options.append("--recursive")
-        additional_vid_options.append("--time_sample=1")
+        from addaxai.orchestration.deploy_helpers import build_deploy_options
+        additional_img_options, additional_vid_options = build_deploy_options(
+            simple_mode=True,
+            timelapse_mode=state.timelapse_mode,
+            temp_frame_folder=_temp_frame_folder_str,
+        )
 
     # if the user comes from the advanced mode, there are more settings to be checked
     else:
@@ -1822,48 +1786,34 @@ def start_deploy(simple_mode = False):
                 sim_run_btn.configure(state=NORMAL)
                 return
 
-        # create command for the image process to be passed on to run_detector_batch.py
-        if not var_exclude_subs.get():
-            additional_img_options.append("--recursive")
-        if var_use_checkpnts.get():
-            additional_img_options.append("--checkpoint_frequency=" + var_checkpoint_freq.get())
-        if var_cont_checkpnt.get() and check_checkpnt():
-            additional_img_options.append("--resume_from_checkpoint=" + state.loc_chkpnt_file)
-        if var_use_custom_img_size_for_deploy.get():
-            additional_img_options.append("--image_size=" + var_image_size_for_deploy.get())
-
-        # create command for the video process to be passed on to process_video.py
-        if not var_exclude_subs.get():
-            additional_vid_options.append("--recursive")
-        if var_not_all_frames.get():
-            additional_vid_options.append("--time_sample=" + var_nth_frame.get())
+        # build CLI option lists for image and video detection
+        from addaxai.orchestration.deploy_helpers import build_deploy_options
+        _chkpnt_path = state.loc_chkpnt_file if (var_cont_checkpnt.get() and check_checkpnt()) else ""
+        additional_img_options, additional_vid_options = build_deploy_options(
+            simple_mode=False,
+            exclude_subs=var_exclude_subs.get(),
+            use_checkpoints=var_use_checkpnts.get(),
+            checkpoint_freq=var_checkpoint_freq.get(),
+            cont_checkpoint=var_cont_checkpnt.get(),
+            checkpoint_path=_chkpnt_path,
+            custom_img_size=var_image_size_for_deploy.get() if var_use_custom_img_size_for_deploy.get() else "",
+            not_all_frames=var_not_all_frames.get(),
+            nth_frame=var_nth_frame.get(),
+            timelapse_mode=state.timelapse_mode,
+            temp_frame_folder=_temp_frame_folder_str,
+        )
 
 
     # open progress window with frames for each process that needs to be done
     state.progress_window = ProgressWindow(processes = processes, master=root, scale_factor=scale_factor, padx=PADX, pady=PADY, green_primary=green_primary)
     state.progress_window.open()
 
-    # check the chosen folder of special characters and alert the user is there are any
-    isolated_special_fpaths = {"total_saved_images": 0}
-    for main_dir, _, files in os.walk(chosen_folder):
-        for file in files:
-            file_path = os.path.join(main_dir, file)
-            if os.path.splitext(file_path)[1].lower() in ['.jpg', '.jpeg', '.png', '.mp4', '.avi', '.mpeg', '.mpg']:
-                bool, char = contains_special_characters(file_path)
-                if bool:
-                    drive, rest_of_path = os.path.splitdrive(file_path)
-                    path_components = rest_of_path.split(os.path.sep)
-                    isolated_special_fpath = drive
-                    for path_component in path_components: # check the largest dir that is faulty
-                        isolated_special_fpath = os.path.join(isolated_special_fpath, path_component)
-                        if contains_special_characters(path_component)[0]:
-                            isolated_special_fpaths["total_saved_images"] += 1
-                            if isolated_special_fpath in isolated_special_fpaths:
-                                isolated_special_fpaths[isolated_special_fpath][0] += 1
-                            else:
-                                isolated_special_fpaths[isolated_special_fpath] = [1, char]
-    n_special_chars = len(isolated_special_fpaths) - 1
-    total_saved_images = isolated_special_fpaths['total_saved_images'];del isolated_special_fpaths['total_saved_images']
+    # check the chosen folder for special characters and alert the user if there are any
+    from addaxai.orchestration.deploy_helpers import scan_special_characters
+    _special_result = scan_special_characters(chosen_folder)
+    total_saved_images = _special_result["total_files"]
+    isolated_special_fpaths = _special_result["paths"]
+    n_special_chars = len(isolated_special_fpaths)
 
     if total_saved_images > 0:
         # write to log file
