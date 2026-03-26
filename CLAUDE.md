@@ -78,17 +78,23 @@ duplicate OrchestratorCallbacks construction. Net result: app.py reduced from 7,
   `addaxai/models/download.py`. Parameterized `current_AA_version`, replaced progress
   windows with injected callbacks. App.py retains thin shims for user confirmation
   dialogs and progress window creation.
+- **Step 8a.5:** Extracted 3 deploy helpers (`scan_media_presence`, `build_deploy_options`,
+  `scan_special_characters`) to `addaxai/orchestration/deploy_helpers.py`. Wired all 3
+  call sites in `start_deploy()` — removed ~95 lines of inline logic.
+- **Step 8a.6:** Extracted `count_annotations_per_class()` to `hitl/data.py` (from
+  `produce_graph()`). Extracted `reclassify_speciesnet_detections()` to
+  `addaxai/processing/speciesnet.py` (from `deploy_speciesnet()`).
 
 ---
 
-## Current State (as of 2026-03-26)
+## Current State (as of 2026-03-25)
 
 ### Numbers
 
-- **60 Python modules** under `addaxai/` (~15,200 lines total)
-- **`addaxai/app.py`**: ~6,300 lines — orchestrators wired, business logic extraction ongoing
-- **`addaxai/orchestration/`**: 2,076 lines — headless orchestrators (fully wired)
-- **44 test files** under `tests/` (634 passing, ~11 skipped)
+- **63 Python modules** under `addaxai/` (~15,500 lines total)
+- **`addaxai/app.py`**: ~6,100 lines — orchestrators wired, business logic extraction ongoing
+- **`addaxai/orchestration/`**: 2,230 lines — headless orchestrators + deploy helpers
+- **47 test files** under `tests/` (666 passing, ~10 skipped)
 - **3 CI jobs**: unit tests (Python 3.9 + 3.11 with coverage), ruff lint, mypy typecheck
 
 ### What's Done
@@ -103,17 +109,19 @@ duplicate OrchestratorCallbacks construction. Net result: app.py reduced from 7,
 - View protocols: `DeployView`, `PostprocessView`, `HITLView`, `ResultsView`
 - JSON schemas, REST API (read-only), `InferenceBackend` protocol
 - `addaxai/orchestration/` — headless pipeline functions, wired to app.py via thin shims
-- `addaxai/hitl/data.py` — HITL data processing (verification, JSON update) parameterized
+- `addaxai/hitl/data.py` — HITL data processing (verification, JSON update, annotation counting)
 - `addaxai/models/download.py` — model/env download logic with callback-based progress
+- `addaxai/orchestration/deploy_helpers.py` — media scanning, option building, special char scanning
+- `addaxai/processing/speciesnet.py` — SpeciesNet JSON conversion (label map merge, reclassification)
 
-### What Remains in app.py (~6,300 lines)
+### What Remains in app.py (~6,100 lines)
 
-The orchestrators are wired. What remains is:
+The orchestrators are wired and business logic extraction is ongoing. What remains is:
 
-1. **`start_deploy()`** — ~730 lines. Validation, model/env download, ProgressWindow
-   setup, subprocess option building, then calls `deploy_model()`. The largest single
-   function. Contains ~200 lines of extractable input validation and ~100 lines of
-   option-building logic that could become pure functions.
+1. **`start_deploy()`** — ~600 lines. Validation, model/env download, ProgressWindow
+   setup, then calls `deploy_model()`. Option building and media scanning now extracted
+   to `deploy_helpers.py`. Still contains ~200 lines of GUI validation dialogs and
+   ~130 lines of post-deploy JSON management.
 2. **HITL orchestration** — ~900 lines across `open_annotation_windows()` (362 lines),
    `open_hitl_settings_window()` (359 lines), `select_detections()` (290 lines), and
    helpers. Deeply coupled to tkinter widget state.
@@ -122,8 +130,9 @@ The orchestrators are wired. What remains is:
    Pure GUI construction, no business logic. Can move to `addaxai/ui/dialogs/`.
 4. **GUI callbacks** — ~850 lines of toggle/frame/language functions. Pure GUI glue
    coupling multiple tabs. Extracting requires inter-module communication design.
-5. **`deploy_speciesnet()`** — ~244 lines. SpeciesNet subprocess + JSON conversion.
-   Mixed business logic and GUI output.
+5. **`deploy_speciesnet()`** — ~210 lines. SpeciesNet subprocess orchestration.
+   JSON conversion logic extracted to `processing/speciesnet.py`; subprocess management
+   and GUI output remain.
 6. **Bootstrapping** — ~600 lines of window construction, widget creation, `main()`.
 
 ---
@@ -152,12 +161,14 @@ addaxai/
 │   ├── __init__.py
 │   ├── context.py          # DeployConfig, ClassifyConfig, PostprocessConfig dataclasses
 │   ├── callbacks.py        # OrchestratorCallbacks dataclass
+│   ├── deploy_helpers.py   # scan_media_presence, build_deploy_options, scan_special_characters
 │   ├── stdout_parser.py    # parse_detection_stdout, parse_classification_stdout
 │   └── pipeline.py         # run_detection, run_classification, run_postprocess, _postprocess_inner
 ├── processing/
 │   ├── annotations.py      # Pascal VOC / COCO / YOLO XML conversion
 │   ├── export.py           # csv_to_coco
-│   └── postprocess.py      # move_files, format_size
+│   ├── postprocess.py      # move_files, format_size
+│   └── speciesnet.py       # reclassify_speciesnet_detections
 ├── analysis/
 │   └── plots.py            # fig2img, overlay_logo, calculate_time_span, _produce_plots_extracted
 ├── i18n/
@@ -165,7 +176,7 @@ addaxai/
 │   └── en.json, es.json, fr.json
 ├── hitl/
 │   ├── __init__.py
-│   └── data.py             # verification_status, check_if_img_needs_converting, update_json_from_img_list
+│   └── data.py             # verification_status, check_if_img_needs_converting, update_json_from_img_list, count_annotations_per_class
 ├── ui/
 │   ├── protocols.py        # DeployView, PostprocessView, HITLView, ResultsView
 │   ├── deploy_tab.py       # build_widgets() + event handlers for deploy/classify
@@ -277,7 +288,7 @@ Tests are split by runtime because the GUI requires a specific conda env not ava
 
 **Unit tests** (`tests/test_*.py`, excluding GUI tests): Run with `.venv` Python 3.9+.
 Fast (~30s). Import `addaxai/` modules directly. No tkinter, no conda, no models.
-Current count: ~634 passing, ~11 skipped (optional deps: cv2, matplotlib, customtkinter).
+Current count: ~666 passing, ~10 skipped (optional deps: cv2, matplotlib, customtkinter).
 
 **GUI integration tests** (`tests/test_gui_integration.py`): Run with env-base Python 3.8.
 The `tests/gui_test_runner.py` harness `exec()`s `addaxai/app.py` with a patched
