@@ -1344,202 +1344,46 @@ def fetch_taxon_mapping_df():
         return pd.read_csv(taxon_mapping_csv)
 
 # take MD json and classify detections
-def classify_detections(json_fpath, data_type, simple_mode = False):
-    # log
+def classify_detections(json_fpath, data_type, simple_mode=False):
     logger.debug("EXECUTED: %s", sys._getframe().f_code.co_name)
+    from addaxai.orchestration.pipeline import run_classification
+    from addaxai.orchestration.context import ClassifyConfig
+    from addaxai.orchestration.callbacks import OrchestratorCallbacks
 
-    # emit event
-    event_bus.emit(CLASSIFY_STARTED, process=f"{data_type}_cls")
+    config = ClassifyConfig(
+        base_path=AddaxAI_files,
+        cls_model_name=var_cls_model.get(),
+        disable_gpu=var_disable_GPU.get(),
+        cls_detec_thresh=var_cls_detec_thresh.get(),
+        cls_class_thresh=var_cls_class_thresh.get(),
+        smooth_cls_animal=var_smooth_cls_animal.get(),
+        tax_fallback=var_tax_fallback.get(),
+        temp_frame_folder=state.temp_frame_folder or "",
+        lang_idx=i18n_lang_idx(),
+    )
 
-    # show user it's loading via event bus
-    root.update()  # process tkinter event loop for GUI responsiveness
-    event_bus.emit(CLASSIFY_PROGRESS, pct=0.0, message="Loading classification model",
-                   process=f"{data_type}_cls", status="load")
+    callbacks = OrchestratorCallbacks(
+        on_error=mb.showerror,
+        on_warning=mb.showwarning,
+        on_info=mb.showinfo,
+        on_confirm=mb.askyesno,
+        update_ui=root.update,
+        cancel_check=lambda: state.cancel_deploy_model_pressed,
+    )
 
-    # load model specific variables
-    model_vars = load_model_vars()
-    cls_model_fname = model_vars["model_fname"]
-    cls_model_type = model_vars["type"]
-    cls_model_fpath = os.path.join(AddaxAI_files, "models", "cls", var_cls_model.get(), cls_model_fname)
+    def _cancel_factory(proc):
+        def _cancel():
+            cancel_deployment(proc)
+        return _cancel
 
-    # check if taxonomic fallback should be the default
-    taxon_mapping_csv_is_present = taxon_mapping_csv_present()
-    taxon_mapping_is_default = model_vars.get("var_tax_fallback_default", False)
-
-    # if present take os-specific env else take general env
-    if os.name == 'nt': # windows
-        cls_model_env = model_vars.get("env-windows", model_vars["env"])
-    elif platform.system() == 'Darwin': # macos
-        cls_model_env = model_vars.get("env-macos", model_vars["env"])
-    else: # linux
-        cls_model_env = model_vars.get("env-linux", model_vars["env"])
-
-    # get param values
-    cls_tax_fallback = False
-    cls_tax_levels_idx = 0
-    if simple_mode:
-        cls_disable_GPU = False
-        cls_detec_thresh = model_vars["var_cls_detec_thresh_default"]
-        cls_class_thresh = model_vars["var_cls_class_thresh_default"]
-        cls_animal_smooth = False
-        if taxon_mapping_csv_is_present:
-            if taxon_mapping_is_default:
-                cls_tax_fallback =  True
-                # leave cls_tax_levels_idx at default 0 to let the model decide
-    else:
-        cls_disable_GPU = var_disable_GPU.get()
-        cls_detec_thresh = var_cls_detec_thresh.get()
-        cls_class_thresh = var_cls_class_thresh.get()
-        cls_animal_smooth = var_smooth_cls_animal.get()
-        if taxon_mapping_csv_is_present:
-            cls_tax_fallback = var_tax_fallback.get() # the users choice
-            cls_tax_levels_idx = model_vars["var_tax_levels_idx"] # take idx from model vars
-
-    # init paths
-    python_executable = get_python_interpreter(AddaxAI_files,cls_model_env)
-    inference_script = os.path.join(AddaxAI_files, "AddaxAI", "classification_utils", "model_types", cls_model_type, "classify_detections.py")
-
-    # create command
-    command_args = []
-    command_args.append(python_executable)
-    command_args.append(inference_script)
-    command_args.append(AddaxAI_files)
-    command_args.append(cls_model_fpath)
-    command_args.append(str(cls_detec_thresh))
-    command_args.append(str(cls_class_thresh))
-    command_args.append(str(cls_animal_smooth))
-    command_args.append(json_fpath)
-    if state.temp_frame_folder:
-        command_args.append(state.temp_frame_folder)
-    else:
-        command_args.append("None")
-    command_args.append(str(cls_tax_fallback))
-    command_args.append(str(cls_tax_levels_idx))
-
-    # adjust command for unix OS
-    if os.name != 'nt':
-        command_args = "'" + "' '".join(command_args) + "'"
-
-    # prepend with os-specific commands
-    if os.name == 'nt': # windows
-        if cls_disable_GPU:
-            command_args = ['set CUDA_VISIBLE_DEVICES="" &'] + command_args
-    elif platform.system() == 'Darwin': # macos
-        command_args = "export PYTORCH_ENABLE_MPS_FALLBACK=1 && " + command_args
-    else: # linux
-        if cls_disable_GPU:
-            command_args =  "CUDA_VISIBLE_DEVICES='' " + command_args
-        else:
-            command_args = "export PYTORCH_ENABLE_MPS_FALLBACK=1 && " + command_args
-
-    # log command
-    logger.debug("Command: %s", command_args)
-
-    # prepare process and cancel method per OS
-    if os.name == 'nt':
-        # run windows command
-        p = Popen(command_args,
-                  stdout=subprocess.PIPE,
-                  stderr=subprocess.STDOUT,
-                  bufsize=1,
-                  shell=True,
-                  universal_newlines=True)
-
-    else:
-        # run unix command
-        p = Popen(command_args,
-                  stdout=subprocess.PIPE,
-                  stderr=subprocess.STDOUT,
-                  bufsize=1,
-                  shell=True,
-                  universal_newlines=True,
-                  preexec_fn=os.setsid)
-
-    # reset subprocess output
-    state.subprocess_output = ""
-
-    # calculate metrics while running
-    status_setting = 'running'
-    elapsed_time = ""
-    processing_speed = ""
-    GPU_param = "Unknown"
-    for line in p.stdout:
-
-        # save output if something goes wrong
-        state.subprocess_output = state.subprocess_output + line
-        state.subprocess_output = state.subprocess_output[-1000:]
-
-        # log
-        logger.info(line.rstrip())
-
-        # catch early exit if there are no detections that meet the requirmentents to classify
-        if line.startswith("n_crops_to_classify is zero. Nothing to classify."):
-            event_bus.emit(CLASSIFY_ERROR, message="No animal detections that meet the criteria", process=f"{data_type}_cls")
-            mb.showinfo(t('information'), ["There are no animal detections that meet the criteria. You either "
-                                                "have selected images without any animals present, or you have set "
-                                                "your detection confidence threshold to high.", "No hay detecciones"
-                                                " de animales que cumplan los criterios. O bien ha seleccionado "
-                                                "imágenes sin presencia de animales, o bien ha establecido el umbral"
-                                                " de confianza de detección en alto.",
-                                                "Aucune détection d'animal ne rencontre les critères. Vous avez soit sélectionner "
-                                                "des images sans animaux présents, ou vous avez régler le seuil de confiance "
-                                                "de détection trop haut."][i18n_lang_idx()])
-            elapsed_time = "00:00",
-            time_left = "00:00",
-            current_im = "0",
-            total_im = "0",
-            processing_speed = "0it/s",
-            percentage = "100",
-            GPU_param = "Unknown",
-            data_type = data_type,
-            break
-
-        # catch smoothening info lines
-        if "<EA>" in line:
-            smooth_output_line = re.search('<EA>(.+)<EA>', line).group().replace('<EA>', '')
-            smooth_output_file = os.path.join(os.path.dirname(json_fpath), "smooth-output.txt")
-            with open(smooth_output_file, 'a+') as f:
-                f.write(f"{smooth_output_line}\n")
-            f.close()
-
-        # if smoothing, the pbar should change description
-        if "<EA-status-change>" in line:
-            status_setting = re.search('<EA-status-change>(.+)<EA-status-change>', line).group().replace('<EA-status-change>', '')
-
-        # get process stats and send them to tkinter
-        if line.startswith("GPU available: False"):
-            GPU_param = "CPU"
-        elif line.startswith("GPU available: True"):
-            GPU_param = "GPU"
-        elif '%' in line[0:4]:
-
-            # read stats
-            times = re.search(r"(\[.*?\])", line)[1]
-            progress_bar = re.search(r"^[^\/]*[^[^ ]*", line.replace(times, ""))[0]
-            percentage = re.search(r"\d*%", progress_bar)[0][:-1]
-            current_im = re.search(r"\d*\/", progress_bar)[0][:-1]
-            total_im = re.search(r"\/\d*", progress_bar)[0][1:]
-            elapsed_time = re.search(r"(?<=\[)(.*)(?=<)", times)[1]
-            time_left = re.search("(?<=<)(.*)(?=,)", times)[1]
-            processing_speed = re.search("(?<=,)(.*)(?=])", times)[1].strip()
-
-            # print stats via event bus
-            event_bus.emit(CLASSIFY_PROGRESS, pct=float(percentage), message=f"Classifying: {current_im}/{total_im}",
-                           process=f"{data_type}_cls", status=status_setting,
-                           cur_it=int(current_im), tot_it=int(total_im),
-                           time_ela=elapsed_time, time_rem=time_left,
-                           speed=processing_speed, hware=GPU_param,
-                           cancel_func=lambda: cancel_deployment(p))
-        root.update()  # process tkinter event loop for GUI responsiveness
-
-    # process is done via event bus
-    event_bus.emit(CLASSIFY_PROGRESS, pct=100.0, message="Classification complete",
-                   process=f"{data_type}_cls", status="done",
-                   time_ela=elapsed_time, speed=processing_speed)
-    # emit finished event
-    event_bus.emit(CLASSIFY_FINISHED, results_path=json_fpath, process=f"{data_type}_cls")
-
-    root.update()  # process tkinter event loop for GUI responsiveness
+    run_classification(
+        config=config,
+        callbacks=callbacks,
+        json_fpath=json_fpath,
+        data_type=data_type,
+        cancel_func_factory=_cancel_factory,
+        simple_mode=simple_mode,
+    )
 
 # quit popen process and update UI state
 def cancel_deployment(process):
