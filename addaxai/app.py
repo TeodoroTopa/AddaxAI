@@ -209,9 +209,7 @@ from addaxai.core.events import event_bus
 from addaxai.core.event_types import (DEPLOY_STARTED, DEPLOY_PROGRESS, DEPLOY_FINISHED,
                                        DEPLOY_ERROR, DEPLOY_CANCELLED,
                                        CLASSIFY_STARTED, CLASSIFY_PROGRESS, CLASSIFY_FINISHED,
-                                       CLASSIFY_ERROR,
-                                       POSTPROCESS_STARTED,
-                                       POSTPROCESS_FINISHED, POSTPROCESS_ERROR)
+                                       CLASSIFY_ERROR)
 
 import logging
 logger = logging.getLogger("addaxai.gui")
@@ -1220,11 +1218,10 @@ dpd_options_sppnet_location = countries
 
 # open progress window and initiate the post-process progress window
 def start_postprocess():
-    # log
     logger.debug("EXECUTED: %s", sys._getframe().f_code.co_name)
-
-    # emit event
-    event_bus.emit(POSTPROCESS_STARTED)
+    from addaxai.orchestration.pipeline import run_postprocess
+    from addaxai.orchestration.context import PostprocessConfig
+    from addaxai.orchestration.callbacks import OrchestratorCallbacks
 
     # save settings for next time
     write_global_vars(AddaxAI_files, {
@@ -1246,122 +1243,77 @@ def start_postprocess():
         "var_thresh": var_thresh.get()
     })
 
-    # fix user input
+    # read vars needed for ProgressWindow sizing before calling run_postprocess
     src_dir = var_choose_folder.get()
-    dst_dir = var_output_dir.get()
-    thresh = var_thresh.get()
-    sep = var_separate_files.get()
-    keep_series = var_keep_series.get()
-    keep_series_seconds = var_keep_series_seconds.get()
-    keep_series_species = global_vars.get('var_keep_series_species', [])
-    file_placement = var_file_placement.get()
-    sep_conf = var_sep_conf.get()
-    vis = var_vis_files.get()
-    crp = var_crp_files.get()
-    exp = var_exp.get()
-    plt = var_plt.get()
-    exp_format = var_exp_format.get()
+    img_json = os.path.isfile(os.path.join(src_dir, "image_recognition_file.json"))
+    vid_json = os.path.isfile(os.path.join(src_dir, "video_recognition_file.json"))
 
-    # init cancel variable
+    # build config
+    config = PostprocessConfig(
+        source_folder=src_dir,
+        dest_folder=var_output_dir.get(),
+        thresh=var_thresh.get(),
+        separate_files=var_separate_files.get(),
+        file_placement=var_file_placement.get(),
+        sep_conf=var_sep_conf.get(),
+        vis=var_vis_files.get(),
+        crp=var_crp_files.get(),
+        exp=var_exp.get(),
+        plt=var_plt.get(),
+        exp_format=var_exp_format.get(),
+        data_type="img",
+        vis_blur=var_vis_blur.get(),
+        vis_bbox=var_vis_bbox.get(),
+        vis_size_idx=t('dpd_vis_size').index(var_vis_size.get()),
+        keep_series=var_keep_series.get(),
+        keep_series_seconds=var_keep_series_seconds.get(),
+        keep_series_species=global_vars.get('var_keep_series_species', []),
+        current_version=current_AA_version,
+        lang_idx=i18n_lang_idx(),
+    )
+
+    callbacks = OrchestratorCallbacks(
+        on_error=mb.showerror,
+        on_warning=mb.showwarning,
+        on_info=mb.showinfo,
+        on_confirm=mb.askyesno,
+        update_ui=root.update,
+        cancel_check=lambda: state.cancel_var,
+    )
+
+    # open ProgressWindow only if JSON files exist (run_postprocess will handle the
+    # no-JSON error case via callbacks.on_error without needing a window)
+    if img_json or vid_json:
+        processes = []
+        if img_json:
+            processes.append("img_pst")
+        if config.plt:
+            processes.append("plt")
+        if vid_json:
+            processes.append("vid_pst")
+        state.progress_window = ProgressWindow(
+            processes=processes, master=root,
+            scale_factor=scale_factor, padx=PADX, pady=PADY,
+            green_primary=green_primary)
+        state.progress_window.open()
+
     state.cancel_var = False
 
-    # check which json files are present
-    img_json = False
-    if os.path.isfile(os.path.join(src_dir, "image_recognition_file.json")):
-        img_json = True
-    vid_json = False
-    if os.path.isfile(os.path.join(src_dir, "video_recognition_file.json")):
-        vid_json = True
-    if not img_json and not vid_json:
-        event_bus.emit(POSTPROCESS_ERROR, message="No model output found")
-        mb.showerror(t('error'), t('msg_no_model_output'))
-        return
+    def _cancel():
+        state.cancel_var = True
 
-    # check if destination dir is valid and set to input dir if not
-    if dst_dir in ["", "/", "\\", ".", "~", ":"] or not os.path.isdir(dst_dir):
-        event_bus.emit(POSTPROCESS_ERROR, message="Destination folder not set or invalid")
-        mb.showerror(t('msg_dest_folder_not_set'),
-                        ["Destination folder not set.\n\n You have not specified where the post-processing results should be placed or the set "
-                        "folder does not exist. This is required.",
-                        "Carpeta de destino no establecida. No ha especificado dónde deben colocarse los resultados del postprocesamiento o la "
-                        "carpeta establecida no existe. Esto opción es obligatoria.",
-                        "Le répertoire de sortie n'est pas spécifié. Vous n'avez pas spécifié l'emplacement où enregistrer les résultats du post-traitement "
-                        "ou le répertoire n'existe pas. Ceci est obligatoire."][i18n_lang_idx()])
-        return
+    result = run_postprocess(
+        config=config,
+        callbacks=callbacks,
+        cancel_func=_cancel,
+        produce_plots_func=produce_plots,
+        base_path=AddaxAI_files,
+        cls_model_name=var_cls_model.get(),
+    )
 
-    # warn user if the original files will be overwritten with visualized files
-    if os.path.normpath(dst_dir) == os.path.normpath(src_dir) and vis and not sep:
-        if not mb.askyesno(t('msg_original_images_overwritten'),
-                      [f"WARNING! The visualized images will be placed in the folder with the original data: '{src_dir}'. By doing this, you will overwrite the original images"
-                      " with the visualized ones. Visualizing is permanent and cannot be undone. Are you sure you want to continue?",
-                      f"ATENCIÓN. Las imágenes visualizadas se colocarán en la carpeta con los datos originales: '{src_dir}'. Al hacer esto, se sobrescribirán las imágenes "
-                      "originales con las visualizadas. La visualización es permanente y no se puede deshacer. ¿Está seguro de que desea continuar?",
-                      f"ATTENTION ! Les images visualisées seront placées dans le dossier contenant les données d'origine : « {src_dir} ». Ce faisant, vous écraserez les images d'origine par celles visualisées. "
-                      "La visualisation est définitive et irréversible. Voulez-vous vraiment continuer ? "][i18n_lang_idx()]):
-            return
-
-    # warn user if images will be moved and visualized
-    if sep and file_placement == 1 and vis:
-        if not mb.askyesno(t('msg_original_images_overwritten'),
-                      [f"WARNING! You specified to visualize the original images. Visualizing is permanent and cannot be undone. If you don't want to visualize the original "
-                      f"images, please select 'Copy' as '{t('lbl_file_placement')}'. Are you sure you want to continue with the current settings?",
-                      "ATENCIÓN. Ha especificado visualizar las imágenes originales. La visualización es permanente y no puede deshacerse. Si no desea visualizar las "
-                      f"imágenes originales, seleccione 'Copiar' como '{t('lbl_file_placement')}'. ¿Está seguro de que desea continuar con la configuración actual?",
-                      "ATTENTION ! Vous avez spécifié de visualiser les images originales. La visualisation est définitive et irréversible. Si vous ne souhaitez pas visualiser les images originales, "
-                      f"sélectionnez « Copier » au format « {t('lbl_file_placement')} ». Voulez-vous vraiment conserver les paramètres actuels ?"][i18n_lang_idx()]):
-            return
-
-    # initialise progress window with processes
-    processes = []
-    if img_json:
-        processes.append("img_pst")
-    if plt:
-        processes.append("plt")
-    if vid_json:
-        processes.append("vid_pst")
-    state.progress_window = ProgressWindow(processes = processes, master=root, scale_factor=scale_factor, padx=PADX, pady=PADY, green_primary=green_primary)
-    state.progress_window.open()
-
-    try:
-        # postprocess images
-        if img_json:
-            postprocess(src_dir, dst_dir, thresh, sep, keep_series, keep_series_seconds, file_placement, sep_conf, vis, crp, exp, plt, exp_format, data_type = "img", keep_series_species=keep_series_species)
-
-        # postprocess videos
-        if vid_json and not state.cancel_var:
-            postprocess(src_dir, dst_dir, thresh, sep, keep_series, keep_series_seconds, file_placement, sep_conf, vis, crp, exp, plt, exp_format, data_type = "vid", keep_series_species=keep_series_species)
-
-        # complete
+    if result.success:
         complete_frame(fth_step)
-
-        # check if there are postprocessing errors written
-        if os.path.isfile(state.postprocessing_error_log):
-            mb.showwarning(t('warning'), [f"One or more files failed to be analysed by the model (e.g., corrupt files) and will be skipped by "
-                                                f"post-processing features. See\n\n'{state.postprocessing_error_log}'\n\nfor more info.",
-                                                f"Uno o más archivos no han podido ser analizados por el modelo (por ejemplo, ficheros corruptos) y serán "
-                                                f"omitidos por las funciones de post-procesamiento. Para más información, véase\n\n'{state.postprocessing_error_log}'",
-                                                "Un ou plusieurs fichiers n'ont pas pu être analysés par le modèle (par exemple, des fichiers corrompus) et seront"
-                                                f"ignorés lors du post-traitement. Voir\n\n'{state.postprocessing_error_log}'\n\npour plus d'info."][i18n_lang_idx()])
-
-        # emit finished event
-        event_bus.emit(POSTPROCESS_FINISHED)
-
-        # close progress window
-        state.progress_window.close()
-
-    except Exception as error:
-        # log error
-        logger.error("ERROR: %s", error, exc_info=True)
-
-        # emit error event
-        event_bus.emit(POSTPROCESS_ERROR, message=str(error))
-
-        # show error
-        mb.showerror(title=t('error'),
-                     message=t('an_error_occurred') + " (AddaxAI v" + current_AA_version + "): '" + str(error) + "'.",
-                     detail=traceback.format_exc())
-
-        # close window
+    if img_json or vid_json:
         state.progress_window.close()
 
 # function to produce graphs and maps
