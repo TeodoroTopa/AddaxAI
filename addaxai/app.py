@@ -204,6 +204,12 @@ from addaxai.ui.advanced.help_tab import HyperlinkManager, write_help_tab
 from addaxai.ui.advanced.about_tab import write_about_tab
 from addaxai.ui.simple.simple_window import build_simple_mode
 from addaxai.core.state import AppState
+from addaxai.hitl.data import (
+    verification_status as hitl_verification_status,
+    check_if_img_needs_converting as hitl_check_if_img_needs_converting,
+    fetch_confs_per_class as hitl_fetch_confs_per_class,
+    update_json_from_img_list as hitl_update_json_from_img_list,
+)
 from addaxai.core.logging import setup_logging
 from addaxai.core.events import event_bus
 
@@ -780,11 +786,11 @@ def open_annotation_windows(recognition_file, class_list_txt, file_list_txt, lab
                 annotation = return_xml_path(img, var_choose_folder.get())
 
                 # check which need converting to json
-                if check_if_img_needs_converting(img):
+                if hitl_check_if_img_needs_converting(img, var_choose_folder.get()):
                     imgs_needing_converting.append(img)
 
                 # check how many are verified
-                if verification_status(annotation):
+                if hitl_verification_status(annotation):
                     n_verified_files += 1
 
                 # update progress window
@@ -977,7 +983,7 @@ def open_annotation_windows(recognition_file, class_list_txt, file_list_txt, lab
         for line in f:
             img = line.rstrip()
             annotation = return_xml_path(img, var_choose_folder.get())
-            if check_if_img_needs_converting(img):
+            if hitl_check_if_img_needs_converting(img, var_choose_folder.get()):
                 imgs_needing_converting.append(img)
     converting_patience_dialog.update_progress(current = 1)
     converting_patience_dialog.close()
@@ -992,7 +998,12 @@ def open_annotation_windows(recognition_file, class_list_txt, file_list_txt, lab
     current = 1
 
     # convert
-    update_json_from_img_list(imgs_needing_converting, inverted_label_map, recognition_file, patience_dialog, current)
+    current = hitl_update_json_from_img_list(
+        imgs_needing_converting, inverted_label_map, recognition_file,
+        base_folder=var_choose_folder.get(),
+        progress_callback=lambda c: patience_dialog.update_progress(current=c, percentage=True),
+        current=current,
+    )
     current += len(imgs_needing_converting)
 
     # open json
@@ -1012,7 +1023,7 @@ def open_annotation_windows(recognition_file, class_list_txt, file_list_txt, lab
                 xml_path = return_xml_path(image_path, var_choose_folder.get())
                 if os.path.isfile(xml_path):
                     # ... but not anymore in xml
-                    if not verification_status(xml_path):
+                    if not hitl_verification_status(xml_path):
                         # set check flag in json
                         image['manually_checked'] = False
                         # reset confidence from 1.0 to arbitrary value
@@ -1243,77 +1254,9 @@ def start_or_continue_hitl():
                         "Il semble que vous ayez déjà complété la dernière session de vérification. Souhaitez-vous démarrer un nouvelle session?"][i18n_lang_idx()]):
             open_hitl_settings_window()
 
-# open xml and check if the data is already in the json
-def check_if_img_needs_converting(img_file):
-    # open xml
-    root = ET.parse(return_xml_path(img_file, var_choose_folder.get())).getroot()
-
-    # read verification status
-    try:
-        verification_status = True if root.attrib['verified'] == 'yes' else False
-    except:
-        verification_status = False
-
-    # read json update status
-    try:
-        json_update_status = True if root.attrib['json_updated'] == 'yes' else False
-    except:
-        json_update_status = False
-
-    # return whether or not it needs converting to json
-    if verification_status == True and json_update_status == False:
-        return True
-    else:
-        return False
 
 
 
-# update json from list with verified images
-def update_json_from_img_list(verified_images, inverted_label_map, recognition_file, patience_dialog, current):
-
-        # check if the json has relative paths
-        if check_json_paths(recognition_file, var_choose_folder.get()) == "relative":
-            json_paths_are_relative = True
-        else:
-            json_paths_are_relative = False
-
-        # open
-        with open(recognition_file, "r") as image_recognition_file_content:
-            data = json.load(image_recognition_file_content)
-
-        # adjust
-        for image in data['images']:
-            image_path = image['file']
-            if json_paths_are_relative:
-                image_path = os.path.normpath(os.path.join(os.path.dirname(recognition_file), image_path))
-            if image_path in verified_images:
-
-                # update progress
-                patience_dialog.update_progress(current = current, percentage = True)
-                current += 1
-
-                # read
-                xml = return_xml_path(image_path, var_choose_folder.get())
-                coco, verification_status, new_class, inverted_label_map = convert_xml_to_coco(xml, inverted_label_map)
-                image['manually_checked'] = verification_status
-                if new_class:
-                    data['detection_categories'] = {v: k for k, v in inverted_label_map.items()}
-                if verification_status:
-                    image['detections'] = coco['detections']
-
-                    # adjust xml file
-                    tree = ET.parse(xml)
-                    root = tree.getroot()
-                    root.set('json_updated', 'yes')
-                    indent_xml(root)
-                    tree.write(xml)
-        image_recognition_file_content.close()
-
-        # write
-        logger.debug("Writing recognition file: %s", recognition_file)
-        with open(recognition_file, "w") as json_file:
-            json.dump(data, json_file, indent=1)
-        image_recognition_file_content.close()
 
 # write model specific variables to file
 def write_model_vars(model_type="cls", new_values = None):
@@ -2553,21 +2496,6 @@ def select_detections(selection_dict, prepare_files):
 
 
 
-# count confidence values per class for histograms
-def fetch_confs_per_class(json_fpath):
-    label_map = fetch_label_map_from_json(os.path.join(var_choose_folder.get(), 'image_recognition_file.json'))
-    confs = {}
-    for key in label_map:
-        confs[key] = []
-    with open(json_fpath) as content:
-        data = json.load(content)
-        for image in data['images']:
-            if 'detections' in image:
-                for detection in image['detections']:
-                    conf = detection["conf"]
-                    category = detection["category"]
-                    confs[category].append(conf)
-    return confs
 
 # open the human-in-the-loop settings window
 def open_hitl_settings_window():
@@ -2577,7 +2505,7 @@ def open_hitl_settings_window():
     # TODO: this window pops up behind the main AddaxAI window on windows OS. place in front, or hide AddaxAI frame.
 
     # fetch confs for histograms
-    confs = fetch_confs_per_class(os.path.join(var_choose_folder.get(), 'image_recognition_file.json'))
+    confs = hitl_fetch_confs_per_class(os.path.join(var_choose_folder.get(), 'image_recognition_file.json'), var_choose_folder.get())
 
     # HITL state stored in AppState
 
@@ -2924,15 +2852,6 @@ def open_hitl_settings_window():
     h = hitl_settings_main_frame.winfo_height() + 10
     hitl_settings_window.geometry(f'{w}x{h}')
 
-# helper function to quickly check the verification status of xml
-def verification_status(xml):
-    tree = ET.parse(xml)
-    root = tree.getroot()
-    try:
-        verification_status = True if root.attrib['verified'] == 'yes' else False
-    except:
-        verification_status = False
-    return verification_status
 
 
 
