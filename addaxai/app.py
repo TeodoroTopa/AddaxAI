@@ -601,12 +601,30 @@ countries = [
 # for simplicity, the same list is used for both english, spanish and french. I'll fix everything properly in the new version
 dpd_options_sppnet_location = countries
 
-# open progress window and initiate the post-process progress window
+def _build_gui_callbacks(cancel_check):
+    """Build OrchestratorCallbacks wired to tkinter messageboxes and root.update."""
+    from addaxai.orchestration.callbacks import OrchestratorCallbacks
+    return OrchestratorCallbacks(
+        on_error=mb.showerror,
+        on_warning=mb.showwarning,
+        on_info=mb.showinfo,
+        on_confirm=mb.askyesno,
+        update_ui=root.update,
+        cancel_check=cancel_check,
+    )
+
+
+def _deploy_cancel_factory(proc):
+    """cancel_func_factory for detection/classification: cancel subprocess and reset UI."""
+    def _cancel():
+        cancel_deployment(proc)
+    return _cancel
+
+
 def start_postprocess():
     logger.debug("EXECUTED: %s", sys._getframe().f_code.co_name)
     from addaxai.orchestration.pipeline import run_postprocess
     from addaxai.orchestration.context import PostprocessConfig
-    from addaxai.orchestration.callbacks import OrchestratorCallbacks
 
     # save settings for next time
     write_global_vars(AddaxAI_files, {
@@ -657,17 +675,9 @@ def start_postprocess():
         lang_idx=i18n_lang_idx(),
     )
 
-    callbacks = OrchestratorCallbacks(
-        on_error=mb.showerror,
-        on_warning=mb.showwarning,
-        on_info=mb.showinfo,
-        on_confirm=mb.askyesno,
-        update_ui=root.update,
-        cancel_check=lambda: state.cancel_var,
-    )
+    callbacks = _build_gui_callbacks(cancel_check=lambda: state.cancel_var)
 
-    # open ProgressWindow only if JSON files exist (run_postprocess will handle the
-    # no-JSON error case via callbacks.on_error without needing a window)
+    # open ProgressWindow only if JSON files exist
     if img_json or vid_json:
         processes = []
         if img_json:
@@ -1345,7 +1355,6 @@ def classify_detections(json_fpath, data_type, simple_mode=False):
     logger.debug("EXECUTED: %s", sys._getframe().f_code.co_name)
     from addaxai.orchestration.pipeline import run_classification
     from addaxai.orchestration.context import ClassifyConfig
-    from addaxai.orchestration.callbacks import OrchestratorCallbacks
 
     config = ClassifyConfig(
         base_path=AddaxAI_files,
@@ -1359,26 +1368,12 @@ def classify_detections(json_fpath, data_type, simple_mode=False):
         lang_idx=i18n_lang_idx(),
     )
 
-    callbacks = OrchestratorCallbacks(
-        on_error=mb.showerror,
-        on_warning=mb.showwarning,
-        on_info=mb.showinfo,
-        on_confirm=mb.askyesno,
-        update_ui=root.update,
-        cancel_check=lambda: state.cancel_deploy_model_pressed,
-    )
-
-    def _cancel_factory(proc):
-        def _cancel():
-            cancel_deployment(proc)
-        return _cancel
-
     run_classification(
         config=config,
-        callbacks=callbacks,
+        callbacks=_build_gui_callbacks(lambda: state.cancel_deploy_model_pressed),
         json_fpath=json_fpath,
         data_type=data_type,
-        cancel_func_factory=_cancel_factory,
+        cancel_func_factory=_deploy_cancel_factory,
         simple_mode=simple_mode,
     )
 
@@ -1395,7 +1390,6 @@ def deploy_model(path_to_image_folder, selected_options, data_type, simple_mode=
     logger.debug("EXECUTED: %s", sys._getframe().f_code.co_name)
     from addaxai.orchestration.pipeline import run_detection
     from addaxai.orchestration.context import DeployConfig
-    from addaxai.orchestration.callbacks import OrchestratorCallbacks
 
     config = DeployConfig(
         base_path=AddaxAI_files,
@@ -1410,27 +1404,13 @@ def deploy_model(path_to_image_folder, selected_options, data_type, simple_mode=
         lang_idx=i18n_lang_idx(),
     )
 
-    callbacks = OrchestratorCallbacks(
-        on_error=mb.showerror,
-        on_warning=mb.showwarning,
-        on_info=mb.showinfo,
-        on_confirm=mb.askyesno,
-        update_ui=root.update,
-        cancel_check=lambda: state.cancel_deploy_model_pressed,
-    )
-
-    def _cancel_factory(proc):
-        def _cancel():
-            cancel_deployment(proc)
-        return _cancel
-
     result = run_detection(
         config=config,
-        callbacks=callbacks,
+        callbacks=_build_gui_callbacks(lambda: state.cancel_deploy_model_pressed),
         data_type=data_type,
         selected_options=selected_options,
         simple_mode=simple_mode,
-        cancel_func_factory=_cancel_factory,
+        cancel_func_factory=_deploy_cancel_factory,
         error_log_path=state.model_error_log,
         warning_log_path=state.model_warning_log,
         current_version=current_AA_version,
