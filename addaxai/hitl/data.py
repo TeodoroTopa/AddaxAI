@@ -165,6 +165,49 @@ def update_json_from_img_list(
     return current
 
 
+def sync_unverified_images(
+    data: Dict,
+    recognition_file: str,
+    base_folder: str,
+    relative_paths: bool = False,
+    progress_callback: Optional[Callable[[int], None]] = None,
+    current: int = 0,
+) -> int:
+    """Reset JSON entries for images that were un-verified in their XML.
+
+    When a user first verifies an image (setting ``manually_checked=True``
+    in JSON) but later un-verifies it in LabelImg, this function detects
+    the mismatch and resets the JSON entry.
+
+    Args:
+        data:              Parsed recognition JSON dict (mutated in place).
+        recognition_file:  Path to the recognition JSON (for resolving relative paths).
+        base_folder:       Project base folder (for locating temp-folder XMLs).
+        relative_paths:    Whether image paths in *data* are relative to *recognition_file*.
+        progress_callback: Optional callback called with current counter.
+        current:           Starting value for the progress counter.
+
+    Returns:
+        The final value of *current* after processing.
+    """
+    for image in data['images']:
+        image_path = image['file']
+        if progress_callback is not None:
+            progress_callback(current)
+        current += 1
+        if relative_paths:
+            image_path = os.path.join(os.path.dirname(recognition_file), image_path)
+        if 'manually_checked' in image and image['manually_checked']:
+            xml_path = return_xml_path(image_path, base_folder)
+            if os.path.isfile(xml_path):
+                if not verification_status(xml_path):
+                    image['manually_checked'] = False
+                    if 'detections' in image:
+                        for detection in image['detections']:
+                            detection['conf'] = 0.7
+    return current
+
+
 def count_annotations_per_class(
     file_list_path: str,
     base_folder: str,

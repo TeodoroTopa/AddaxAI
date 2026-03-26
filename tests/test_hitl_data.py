@@ -162,6 +162,74 @@ class TestUpdateJsonFromImgList:
         assert "patience_dialog" not in params
 
 
+# ─── sync_unverified_images ─────────────────────────────────────────────────
+
+class TestSyncUnverifiedImages:
+    def test_importable(self):
+        from addaxai.hitl.data import sync_unverified_images  # noqa: F401
+
+    def test_resets_unverified_image(self, tmp_path):
+        from addaxai.hitl.data import sync_unverified_images
+
+        base = tmp_path / "project"
+        base.mkdir()
+        temp_folder = base / "temp-folder"
+        temp_folder.mkdir()
+
+        # Create XML with verified=no (user un-verified it)
+        xml_path = temp_folder / "img1.xml"
+        root = ET.Element("annotation", verified="no")
+        ET.SubElement(root, "filename").text = "img1.jpg"
+        ET.ElementTree(root).write(str(xml_path))
+
+        # JSON says manually_checked=True
+        data = {
+            "images": [{
+                "file": "img1.jpg",
+                "manually_checked": True,
+                "detections": [{"category": "1", "conf": 1.0}],
+            }],
+        }
+        rec_file = base / "image_recognition_file.json"
+        rec_file.write_text(json.dumps(data))
+
+        sync_unverified_images(data, str(rec_file), str(base), relative_paths=True)
+
+        # Should be reset
+        assert data["images"][0]["manually_checked"] is False
+        assert data["images"][0]["detections"][0]["conf"] == 0.7
+
+    def test_preserves_verified_image(self, tmp_path):
+        from addaxai.hitl.data import sync_unverified_images
+
+        base = tmp_path / "project"
+        base.mkdir()
+        temp_folder = base / "temp-folder"
+        temp_folder.mkdir()
+
+        # Create XML with verified=yes
+        xml_path = temp_folder / "img1.xml"
+        root = ET.Element("annotation", verified="yes")
+        ET.SubElement(root, "filename").text = "img1.jpg"
+        ET.ElementTree(root).write(str(xml_path))
+
+        data = {
+            "images": [{
+                "file": "img1.jpg",
+                "manually_checked": True,
+                "detections": [{"category": "1", "conf": 0.95}],
+            }],
+        }
+        rec_file = base / "image_recognition_file.json"
+        rec_file.write_text(json.dumps(data))
+
+        sync_unverified_images(data, str(rec_file), str(base), relative_paths=True)
+
+        # Should remain unchanged
+        assert data["images"][0]["manually_checked"] is True
+        assert data["images"][0]["detections"][0]["conf"] == 0.95
+
+
 # ─── count_annotations_per_class ────────────────────────────────────────────
 
 class TestCountAnnotationsPerClass:

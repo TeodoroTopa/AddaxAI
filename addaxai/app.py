@@ -216,6 +216,7 @@ from addaxai.hitl.data import (
     check_if_img_needs_converting as hitl_check_if_img_needs_converting,
     fetch_confs_per_class as hitl_fetch_confs_per_class,
     update_json_from_img_list as hitl_update_json_from_img_list,
+    sync_unverified_images as hitl_sync_unverified_images,
 )
 from addaxai.core.logging import setup_logging
 from addaxai.core.events import event_bus
@@ -1018,31 +1019,16 @@ def open_annotation_windows(recognition_file, class_list_txt, file_list_txt, lab
         data = json.load(image_recognition_file_content)
 
     # check if there are images that the user first verified and then un-verified
-    for image in data['images']:
-        image_path = image['file']
-        patience_dialog.update_progress(current = current, percentage = True)
-        current += 1
-        if json_paths_are_relative:
-            image_path = os.path.join(os.path.dirname(recognition_file), image_path)
-        if 'manually_checked' in image:
-            if image['manually_checked']:
-                # image has been manually checked in json ...
-                xml_path = return_xml_path(image_path, var_choose_folder.get())
-                if os.path.isfile(xml_path):
-                    # ... but not anymore in xml
-                    if not hitl_verification_status(xml_path):
-                        # set check flag in json
-                        image['manually_checked'] = False
-                        # reset confidence from 1.0 to arbitrary value
-                        if 'detections' in image:
-                            for detection in image['detections']:
-                                detection['conf'] = 0.7
+    current = hitl_sync_unverified_images(
+        data, recognition_file, var_choose_folder.get(),
+        relative_paths=json_paths_are_relative,
+        progress_callback=lambda c: patience_dialog.update_progress(current=c, percentage=True),
+        current=current,
+    )
 
     # write json
-    image_recognition_file_content.close()
     with open(recognition_file, "w") as json_file:
         json.dump(data, json_file, indent=1)
-    image_recognition_file_content.close()
     patience_dialog.close()
 
     # finalise things if all images are verified
