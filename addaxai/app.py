@@ -206,10 +206,7 @@ from addaxai.ui.simple.simple_window import build_simple_mode
 from addaxai.core.state import AppState
 from addaxai.core.logging import setup_logging
 from addaxai.core.events import event_bus
-from addaxai.core.event_types import (DEPLOY_STARTED, DEPLOY_PROGRESS, DEPLOY_FINISHED,
-                                       DEPLOY_ERROR, DEPLOY_CANCELLED,
-                                       CLASSIFY_STARTED, CLASSIFY_PROGRESS, CLASSIFY_FINISHED,
-                                       CLASSIFY_ERROR)
+
 
 import logging
 logger = logging.getLogger("addaxai.gui")
@@ -1394,326 +1391,62 @@ def cancel_deployment(process):
     state.progress_window.close()
 
 # deploy model and create json output files
-def deploy_model(path_to_image_folder, selected_options, data_type, simple_mode = False):
-    # log
+def deploy_model(path_to_image_folder, selected_options, data_type, simple_mode=False):
     logger.debug("EXECUTED: %s", sys._getframe().f_code.co_name)
+    from addaxai.orchestration.pipeline import run_detection
+    from addaxai.orchestration.context import DeployConfig
+    from addaxai.orchestration.callbacks import OrchestratorCallbacks
 
-    # emit event
-    event_bus.emit(DEPLOY_STARTED, process=f"{data_type}_det")
+    config = DeployConfig(
+        base_path=AddaxAI_files,
+        det_model_dir=DET_DIR,
+        det_model_name=var_det_model.get(),
+        det_model_path=var_det_model_path.get(),
+        cls_model_name=var_cls_model.get(),
+        disable_gpu=var_disable_GPU.get(),
+        use_abs_paths=var_abs_paths.get(),
+        source_folder=path_to_image_folder,
+        dpd_options_model=state.dpd_options_model,
+        lang_idx=i18n_lang_idx(),
+    )
 
-    # note if user is video analysing without smoothing
-    if (var_cls_model.get() != t('none')) and \
-        (var_smooth_cls_animal.get() == False) and \
-            data_type == 'vid' and \
-                simple_mode == False and \
-                    state.warn_smooth_vid == True:
-                        state.warn_smooth_vid = False
-                        if not mb.askyesno(t('information'), ["You are about to analyze videos without smoothing the confidence scores. "
-                            "Typically, a video may contain many frames of the same animal, increasing the likelihood that at least "
-                            f"one of the labels could be a false prediction. With '{t('lbl_smooth_cls_animal')}' enabled, all"
-                            " predictions from a single video will be averaged, resulting in only one label per video. Do you wish to"
-                            " continue without smoothing?\n\nPress 'No' to go back.", "Estás a punto de analizar videos sin suavizado "
-                            "habilitado. Normalmente, un video puede contener muchos cuadros del mismo animal, lo que aumenta la "
-                            "probabilidad de que al menos una de las etiquetas pueda ser una predicción falsa. Con "
-                            f"'{t('lbl_smooth_cls_animal')}' habilitado, todas las predicciones de un solo video se promediarán,"
-                            " lo que resultará en una sola etiqueta por video. ¿Deseas continuar sin suavizado habilitado?\n\nPresiona "
-                            "'No' para regresar.",
-                            "Vous êtes sur le point d'analyser des vidéos sans lisser les scores de confiance. "
-                            "Typiquement, un vidéo peut contenir plusieurs images d'un même animal, ce qui augmente les chances qu'au moins un "
-                            f"des labels puisse être une fausse prédiction. Avec '{t('lbl_smooth_cls_animal')}' activé, toute"
-                            " les prédictions d'un seul vidéo seront moyennées, résultant en un seul label par vidéo. Souhaitez-vous"
-                            " continuer sans lissage?\n\nAppuyer sur 'Non' pour revenir en arrière."][i18n_lang_idx()]):
-                            return
+    callbacks = OrchestratorCallbacks(
+        on_error=mb.showerror,
+        on_warning=mb.showwarning,
+        on_info=mb.showinfo,
+        on_confirm=mb.askyesno,
+        update_ui=root.update,
+        cancel_check=lambda: state.cancel_deploy_model_pressed,
+    )
 
-    # display loading window — event bus will update UI via event handlers
-    event_bus.emit(DEPLOY_PROGRESS, pct=0.0, message="Loading detection model",
-                   process=f"{data_type}_det", status="load")
+    def _cancel_factory(proc):
+        def _cancel():
+            cancel_deployment(proc)
+        return _cancel
 
-    # prepare variables
-    chosen_folder = str(Path(path_to_image_folder))
-    run_detector_batch_py = os.path.join(AddaxAI_files, "cameratraps", "megadetector", "detection", "run_detector_batch.py")
-    image_recognition_file = os.path.join(chosen_folder, "image_recognition_file.json")
-    process_video_py = os.path.join(AddaxAI_files, "cameratraps", "megadetector", "detection", "process_video.py")
-    video_recognition_file = "--output_json_file=" + os.path.join(chosen_folder, "video_recognition_file.json")
-    GPU_param = "Unknown"
-    python_executable = get_python_interpreter(AddaxAI_files,"base")
+    result = run_detection(
+        config=config,
+        callbacks=callbacks,
+        data_type=data_type,
+        selected_options=selected_options,
+        simple_mode=simple_mode,
+        cancel_func_factory=_cancel_factory,
+        error_log_path=state.model_error_log,
+        warning_log_path=state.model_warning_log,
+        current_version=current_AA_version,
+        smooth_cls_animal=var_smooth_cls_animal.get(),
+        warn_smooth_vid=state.warn_smooth_vid,
+    )
 
-    # select model based on user input via dropdown menu, or take MDv5a for simple mode
-    custom_model_bool = False
-    if simple_mode:
-        det_model_fpath = os.path.join(DET_DIR, "MegaDetector 5a", "md_v5a.0.0.pt")
-        switch_yolov5_version("old models", AddaxAI_files)
-    elif var_det_model.get() != state.dpd_options_model[i18n_lang_idx()][-1]: # if not chosen the last option, which is "custom model"
-        det_model_fname = load_model_vars("det")["model_fname"]
-        det_model_fpath = os.path.join(DET_DIR, var_det_model.get(), det_model_fname)
-        switch_yolov5_version("old models", AddaxAI_files)
-    else:
-        # set model file
-        det_model_fpath = var_det_model_path.get()
-        custom_model_bool = True
-
-        # set yolov5 git to accommodate new models (checkout depending on how you retrain MD)
-        switch_yolov5_version("new models", AddaxAI_files)
-
-        # extract classes
-        label_map = extract_label_map_from_model(det_model_fpath)
-
-        # write labelmap to separate json
-        json_object = json.dumps(label_map, indent=1)
-        native_model_classes_json_file = os.path.join(chosen_folder, "native_model_classes.json")
-        with open(native_model_classes_json_file, "w") as outfile:
-            outfile.write(json_object)
-
-        # add argument to command call
-        selected_options.append("--class_mapping_filename=" + native_model_classes_json_file)
-
-    # set cancel bool
-    state.cancel_deploy_model_pressed = False
-
-    # if a full image classifier is selected, imitate object detection to get full bboxes
-    full_image_cls = load_model_vars("cls").get("full_image_cls", False)
-    if full_image_cls:
-        imitate_object_detection_for_full_image_classifier(chosen_folder)
-
-    # for crop classifiers we need to run the detection first
-    else:
-
-        # create commands for Windows
-        if os.name == 'nt':
-            if selected_options == []:
-                img_command = [python_executable, run_detector_batch_py, det_model_fpath, '--threshold=0.01', chosen_folder, image_recognition_file]
-                vid_command = [python_executable, process_video_py, '--max_width=1280', '--verbose', '--quality=85', '--allow_empty_video', video_recognition_file, det_model_fpath, chosen_folder]
-            else:
-                img_command = [python_executable, run_detector_batch_py, det_model_fpath, *selected_options, '--threshold=0.01', chosen_folder, image_recognition_file]
-                vid_command = [python_executable, process_video_py, *selected_options, '--max_width=1280', '--verbose', '--quality=85', '--allow_empty_video', video_recognition_file, det_model_fpath, chosen_folder]
-
-        # create command for MacOS and Linux
-        else:
-            if selected_options == []:
-                img_command = [f"'{python_executable}' '{run_detector_batch_py}' '{det_model_fpath}' '--threshold=0.01' '{chosen_folder}' '{image_recognition_file}'"]
-                vid_command = [f"'{python_executable}' '{process_video_py}' '--max_width=1280' '--verbose' '--quality=85' '--allow_empty_video' '{video_recognition_file}' '{det_model_fpath}' '{chosen_folder}'"]
-            else:
-                selected_options = "' '".join(selected_options)
-                img_command = [f"'{python_executable}' '{run_detector_batch_py}' '{det_model_fpath}' '{selected_options}' '--threshold=0.01' '{chosen_folder}' '{image_recognition_file}'"]
-                vid_command = [f"'{python_executable}' '{process_video_py}' '{selected_options}' '--max_width=1280' '--verbose' '--quality=85' '--allow_empty_video' '{video_recognition_file}' '{det_model_fpath}' '{chosen_folder}'"]
-
-        # pick one command
-        if data_type == "img":
-            command = img_command
-        else:
-            command = vid_command
-
-        # if user specified to disable GPU, prepend and set system variable
-        if var_disable_GPU.get() and not simple_mode:
-            if os.name == 'nt': # windows
-                command[:0] = ['set', 'CUDA_VISIBLE_DEVICES=""', '&']
-            elif platform.system() == 'Darwin': # macos
-                mb.showwarning(t('warning'),
-                            ["Disabling GPU processing is currently only supported for CUDA devices on Linux and Windows "
-                                "machines, not on macOS. Proceeding without GPU disabled.", "Deshabilitar el procesamiento de "
-                                "la GPU actualmente sólo es compatible con dispositivos CUDA en máquinas Linux y Windows, no en"
-                                " macOS. Proceder sin GPU desactivada.",
-                                "La désactivation du traitement par GPU est uniquement supportée sur les dispositifs CUDA sous "
-                                "Linux et Windows, pas sous MacOS. Poursuite du traitement sans désactiver le GPU."
-                                ""][i18n_lang_idx()])
-                var_disable_GPU.set(False)
-            else: # linux
-                command = "CUDA_VISIBLE_DEVICES='' " + command
-
-        # log
-        logger.debug("Command: %s", command)
-
-        # prepare process and cancel method per OS
-        if os.name == 'nt':
-            # run windows command
-            p = Popen(command,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    bufsize=1,
-                    shell=True,
-                    universal_newlines=True)
-
-        else:
-            # run unix command
-            p = Popen(command,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    bufsize=1,
-                    shell=True,
-                    universal_newlines=True,
-                    preexec_fn=os.setsid)
-
-        # reset subprocess output
-        state.subprocess_output = ""
-        previous_processed_img = ["There is no previously processed image. The problematic character is in the first image to analyse.",
-                                "No hay ninguna imagen previamente procesada. El personaje problemático está en la primera imagen a analizar.",
-                                "Il n'y a aucune image traitée précédemment. Le caractère problématique est dans la première image à analyser."][i18n_lang_idx()]
-        extracting_frames_mode = False
-
-        # check if the unit shown should be frame or video
-        if data_type == "vid" and var_cls_model.get() == t('none'):
-            frame_video_choice = "video"
-        elif data_type == "vid" and var_cls_model.get() != t('none'):
-            frame_video_choice = "frame"
-        else:
-            frame_video_choice = None
-
-        # read output
-        for line in p.stdout:
-
-            # save output if something goes wrong
-            subprocess_output = subprocess_output + line
-            subprocess_output = subprocess_output[-1000:]
-
-            # log
-            logger.info(line.rstrip())
-
-            # catch model errors
-            if line.startswith("No image files found"):
-                error_msg = t('msg_no_images_found')
-                event_bus.emit(DEPLOY_ERROR, message="No image files found", process=f"{data_type}_det")
-                mb.showerror(error_msg,
-                            [f"There are no images found in '{chosen_folder}'. \n\nAre you sure you specified the correct folder?"
-                            f" If the files are in subdirectories, make sure you don't tick '{t('lbl_exclude_subs')}'.",
-                            f"No se han encontrado imágenes en '{chosen_folder}'. \n\n¿Está seguro de haber especificado la carpeta correcta?"
-                            f" Si los archivos están en subdirectorios, asegúrese de no marcar la casilla '{t('lbl_exclude_subs')}'.",
-                            f"Aucune image trouvée dans '{chosen_folder}'. \n\nAvez-vous spécifié le bon dossier?"
-                            f" Si les fichiers sont dans des sous-dossiers, assurez-vous ne pas avoir coché '{t('lbl_exclude_subs')}'."][i18n_lang_idx()])
-                return
-            if line.startswith("No videos found"):
-                event_bus.emit(DEPLOY_ERROR, message="No videos found", process=f"{data_type}_det")
-                mb.showerror(t('msg_no_videos_found'),
-                            line + [f"\n\nAre you sure you specified the correct folder? If the files are in subdirectories, make sure you don't tick '{t('lbl_exclude_subs')}'.",
-                                    f"\n\n¿Está seguro de haber especificado la carpeta correcta? Si los archivos están en subdirectorios, asegúrese de no marcar la casilla '{t('lbl_exclude_subs')}'.",
-                                    f"\n\nAvez-vous spécifié le bon dossier? Si les fichiers sont dans des sous-dossiers, assurez-vous ne pas avoir coché '{t('lbl_exclude_subs')}'."][i18n_lang_idx()])
-                return
-            if line.startswith("No frames extracted"):
-                event_bus.emit(DEPLOY_ERROR, message="No frames extracted", process=f"{data_type}_det")
-                mb.showerror(t('msg_could_not_extract_frames'),
-                            line + ["\n\nConverting the videos to .mp4 might fix the issue.",
-                                    "\n\nConvertir los vídeos a .mp4 podría solucionar el problema.",
-                                    "\n\nConvertir les vidéos au format .mp4 pourrait régler le problème."][i18n_lang_idx()])
-                return
-            if line.startswith("UnicodeEncodeError:"):
-                event_bus.emit(DEPLOY_ERROR, message="UnicodeEncodeError: Unparsable special character in filename", process=f"{data_type}_det")
-                mb.showerror("Unparsable special character",
-                            [f"{line}\n\nThere seems to be a special character in a filename that cannot be parsed. Unfortunately, it's not"
-                            " possible to point you to the problematic file directly, but I can tell you that the last successfully analysed"
-                            f" image was\n\n{previous_processed_img}\n\nThe problematic character should be in the file or folder name of "
-                            "the next image, alphabetically. Please remove any special characters from the path and try again.",
-                            f"{line}\n\nParece que hay un carácter especial en un nombre de archivo que no se puede analizar. Lamentablemente,"
-                            " no es posible indicarle directamente el archivo problemático, pero puedo decirle que la última imagen analizada "
-                            f"con éxito fue\n\n{previous_processed_img}\n\nEl carácter problemático debe estar en el nombre del archivo o "
-                            "carpeta de la siguiente imagen, alfabéticamente. Elimine los caracteres especiales de la ruta e inténtelo de "
-                            "nuevo.",
-                            f"{line}\n\nIl semble y avoir un caractère spécial non-reconnu dans le nom d'un fichier. Malheureusement, il est"
-                            " impossible d'identifier le fichier directement, cependant la dernière images correctement analysée était "
-                            f" \n\n{previous_processed_img}\n\nLe caractère problématique devrait être dans le nom de fichier ou de dossier de "
-                            "la prochaine image, alphabetiquement. SVP remplacer tout caractère spécial du chemin et du nom de fichier et réessayer."][i18n_lang_idx()])
-                return
-            if line.startswith("Processing image "):
-                previous_processed_img = line.replace("Processing image ", "")
-
-            # write errors to log file
-            if "Exception:" in line:
-                with open(state.model_error_log, 'a+') as f:
-                    f.write(f"{line}\n")
-                f.close()
-
-            # write warnings to log file
-            if "Warning:" in line:
-                if "could not determine MegaDetector version" not in line \
-                    and "no metadata for unknown detector version" not in line \
-                    and "using user-supplied image size" not in line \
-                    and "already exists and will be overwritten" not in line:
-                    with open(state.model_warning_log, 'a+') as f:
-                        f.write(f"{line}\n")
-                    f.close()
-
-            # print frame extraction progress and dont continue until done
-            if "Extracting frames for folder " in line and \
-                data_type == "vid":
-                event_bus.emit(DEPLOY_PROGRESS, pct=0.0, message="Extracting frames...",
-                               process=f"{data_type}_det", status="extracting frames")
-                extracting_frames_mode = True
-            if extracting_frames_mode:
-                if '%' in line[0:4]:
-                    event_bus.emit(DEPLOY_PROGRESS, pct=float(line[:3]), message="Extracting frames...",
-                                   process=f"{data_type}_det", status="extracting frames",
-                                   extracting_frames_txt=[f"Extracting frames... {line[:3]}%",
-                                                          f"Extrayendo fotogramas... {line[:3]}%"])
-            if "Extracted frames for" in line and \
-                data_type == "vid":
-                    extracting_frames_mode = False
-            if extracting_frames_mode:
-                continue
-
-            # get process stats and send them to tkinter
-            if line.startswith("GPU available: False"):
-                GPU_param = "CPU"
-            elif line.startswith("GPU available: True"):
-                GPU_param = "GPU"
-            elif '%' in line[0:4]:
-
-                # read stats
-                times = re.search(r"(\[.*?\])", line)[1]
-                progress_bar = re.search(r"^[^\/]*[^[^ ]*", line.replace(times, ""))[0]
-                percentage = re.search(r"\d*%", progress_bar)[0][:-1]
-                current_im = re.search(r"\d*\/", progress_bar)[0][:-1]
-                total_im = re.search(r"\/\d*", progress_bar)[0][1:]
-                elapsed_time = re.search(r"(?<=\[)(.*)(?=<)", times)[1]
-                time_left = re.search("(?<=<)(.*)(?=,)", times)[1]
-                processing_speed = re.search("(?<=,)(.*)(?=])", times)[1].strip()
-
-                # show progress via event bus
-                event_bus.emit(DEPLOY_PROGRESS, pct=float(percentage), message=f"Processing: {current_im}/{total_im}",
-                               process=f"{data_type}_det", status="running",
-                               cur_it=int(current_im), tot_it=int(total_im),
-                               time_ela=elapsed_time, time_rem=time_left,
-                               speed=processing_speed, hware=GPU_param,
-                               cancel_func=lambda: cancel_deployment(p),
-                               frame_video_choice=frame_video_choice)
-            root.update()  # process tkinter event loop for GUI responsiveness
-
-        # process is done
-        root.update()  # process tkinter event loop for GUI responsiveness
-        event_bus.emit(DEPLOY_PROGRESS, pct=100.0, message="Detection complete",
-                       process=f"{data_type}_det", status="done")
-
-    # create addaxai metadata
-    addaxai_metadata = {"addaxai_metadata" : {"version" : current_AA_version,
-                                                  "custom_model" : custom_model_bool,
-                                                  "custom_model_info" : {}}}
-    if custom_model_bool:
-        addaxai_metadata["addaxai_metadata"]["custom_model_info"] = {"model_name" : os.path.basename(os.path.normpath(det_model_fpath)),
-                                                                         "label_map" : label_map}
-
-    # write metadata to json and make absolute if specified
-    image_recognition_file = os.path.join(chosen_folder, "image_recognition_file.json")
-    video_recognition_file = os.path.join(chosen_folder, "video_recognition_file.json")
-    if data_type == "img" and os.path.isfile(image_recognition_file):
-        append_to_json(image_recognition_file, addaxai_metadata)
-        if var_abs_paths.get():
-            make_json_absolute(image_recognition_file, var_choose_folder.get())
-    if data_type == "vid" and os.path.isfile(video_recognition_file):
-        append_to_json(video_recognition_file, addaxai_metadata)
-        if var_abs_paths.get():
-            make_json_absolute(video_recognition_file, var_choose_folder.get())
-
-    # classify detections if specified by user
-    if not state.cancel_deploy_model_pressed:
-        # emit finished event
-        results_path = os.path.join(chosen_folder, "image_recognition_file.json") if data_type == "img" else os.path.join(chosen_folder, "video_recognition_file.json")
-        event_bus.emit(DEPLOY_FINISHED, results_path=results_path, process=f"{data_type}_det")
-
-        if var_cls_model.get() != t('none'):
-            if data_type == "img":
-                classify_detections(os.path.join(chosen_folder, "image_recognition_file.json"), data_type, simple_mode = simple_mode)
-            else:
-                classify_detections(os.path.join(chosen_folder, "video_recognition_file.json"), data_type, simple_mode = simple_mode)
-    else:
-        # emit cancelled event
-        event_bus.emit(DEPLOY_CANCELLED, process=f"{data_type}_det")
+    # preserve existing behavior: classify after successful detection
+    if result.success and var_cls_model.get() != t('none'):
+        chosen_folder = str(Path(path_to_image_folder))
+        json_fpath = result.json_path or (
+            os.path.join(chosen_folder, "image_recognition_file.json")
+            if data_type == "img"
+            else os.path.join(chosen_folder, "video_recognition_file.json")
+        )
+        classify_detections(json_fpath, data_type, simple_mode=simple_mode)
 
 
 
