@@ -204,6 +204,13 @@ from addaxai.ui.advanced.help_tab import HyperlinkManager, write_help_tab
 from addaxai.ui.advanced.about_tab import write_about_tab
 from addaxai.ui.simple.simple_window import build_simple_mode
 from addaxai.core.state import AppState
+from addaxai.models.download import (
+    needs_update as _needs_update,
+    fetch_manifest as _fetch_manifest_extracted,
+    get_download_info as _get_download_info_extracted,
+    download_model_files as _download_model_files,
+    download_and_extract_env as _download_and_extract_env,
+)
 from addaxai.hitl.data import (
     verification_status as hitl_verification_status,
     check_if_img_needs_converting as hitl_check_if_img_needs_converting,
@@ -3882,265 +3889,116 @@ def show_release_info(release):
     updat_btn = customtkinter.CTkButton(btns_frm, text="Update", command=update)
     updat_btn.grid(row=0, column=1, padx=(0, PADX), pady=PADY, sticky="nwse")
 
-# check if the user needs an update
 def needs_EA_update(required_version):
-    current_parts = list(map(int, current_AA_version.split('.')))
-    required_parts = list(map(int, required_version.split('.')))
+    return _needs_update(current_AA_version, required_version)
 
-    # Pad the shorter version with zeros
-    while len(current_parts) < len(required_parts):
-        current_parts.append(0)
-    while len(required_parts) < len(current_parts):
-        required_parts.append(0)
-
-    # Compare each part of the version
-    for current, required in zip(current_parts, required_parts):
-        if current < required:
-            return True  # current_version is lower than required_version
-        elif current > required:
-            return False  # current_version is higher than required_version
-
-    # All parts are equal, consider versions equal
-    return False
-
-# download required files for a particular model
 def download_model(model_dir, skip_ask=False):
-    # init vars
     model_title = os.path.basename(model_dir)
     model_type = os.path.basename(os.path.dirname(model_dir))
-    model_vars = load_model_vars(model_type = model_type)
+    model_vars = load_model_vars(model_type=model_type)
     download_info = model_vars["download_info"]
     total_download_size = model_vars["total_download_size"]
 
-    # download
+    # ask user
+    if not skip_ask:
+        if not mb.askyesno(["Download required", "Descarga necesaria", "Téléchargement requis"][i18n_lang_idx()],
+                        [f"The model {model_title} is not downloaded yet. It will take {total_download_size}"
+                        f" of storage. Do you want to download?", f"El modelo {model_title} aún no se ha descargado."
+                        f" Ocupará {total_download_size} de almacenamiento. ¿Desea descargarlo?",
+                        f"Le modèle {model_title} n'a pas encore été téléchargé. Il occupera {total_download_size}"
+                        f" d'espace disque. Souhaitez-vous le télécharger?"][i18n_lang_idx()]):
+            return False
+
+    # GUI progress window
+    download_popup = ModelDownloadProgressWindow(
+        model_title=model_title, total_size_str=total_download_size,
+        master=root, scale_factor=scale_factor, padx=PADX, pady=PADY,
+        green_primary=green_primary, open_nosleep_func=open_nosleep_page)
+    download_popup.open()
+
     try:
-        # check if the user wants to download
-        if not skip_ask:
-            if not mb.askyesno(["Download required", "Descarga necesaria", "Téléchargement requis"][i18n_lang_idx()],
-                            [f"The model {model_title} is not downloaded yet. It will take {total_download_size}"
-                            f" of storage. Do you want to download?", f"El modelo {model_title} aún no se ha descargado."
-                            f" Ocupará {total_download_size} de almacenamiento. ¿Desea descargarlo?",
-                            f"Le modèle {model_title} n'a pas encore été téléchargé. Il occupera {total_download_size}"
-                            f" d'espace disque. Souhaitez-vous le télécharger?"][i18n_lang_idx()]):
-                return False
-
-        # set headers to trick host to thinking we are a browser
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:66.0) Gecko/20100101 Firefox/66.0",
-            "Accept-Encoding": "*",
-            "Connection": "keep-alive"
-        }
-
-        # some models have multiple files to be downloaded
-        # check the total size first
-        total_size = 0
-        for download_url, _ in download_info:
-            response = requests.get(download_url, stream=True, timeout=30, headers=headers)
-            response.raise_for_status()
-            total_size += int(response.headers.get('content-length', 0))
-
-        # if yes, initiate download and show progress
-        progress_bar = tqdm(total=total_size, unit='B', unit_scale=True)
-        download_popup = ModelDownloadProgressWindow(model_title = model_title, total_size_str = format_size(total_size), master=root, scale_factor=scale_factor, padx=PADX, pady=PADY, green_primary=green_primary, open_nosleep_func=open_nosleep_page)
-        download_popup.open()
-        for download_url, fname in download_info:
-            file_path = os.path.normpath(os.path.join(model_dir, fname))
-            dir_name = os.path.dirname(file_path)
-            if dir_name:
-                os.makedirs(dir_name, exist_ok=True)
-            response = requests.get(download_url, stream=True, timeout=30, headers=headers)
-            response.raise_for_status()
-
-            with open(file_path, 'wb') as file:
-                for chunk in response.iter_content(chunk_size=65536):
-                    if chunk:
-                        file.write(chunk)
-                        progress_bar.update(len(chunk))
-                        percentage_done = progress_bar.n / total_size
-                        download_popup.update_progress(percentage_done)
-        progress_bar.close()
+        _download_model_files(
+            model_dir=model_dir,
+            download_info=download_info,
+            progress_callback=download_popup.update_progress,
+        )
         download_popup.close()
-        logger.info("Download successful. File saved at: %s", file_path)
         return True
-
-    # catch errors
     except Exception as error:
         logger.error("ERROR: %s", error, exc_info=True)
         try:
-            # remove incomplete download
-            if os.path.isfile(file_path):
-                os.remove(file_path)
-        except UnboundLocalError:
-            # file_path is not set, meaning there is no incomplete download
+            download_popup.close()
+        except Exception:
             pass
         show_download_error_window(model_title, model_dir, model_vars)
+        return False
 
-# fetch platform manifest from GitHub Release assets
 def _fetch_manifest(platform_prefix):
-    """Fetch the platform manifest from GitHub Release assets.
-    Try pinned version first, fall back to latest."""
-    repo = "PetervanLunteren/AddaxAI"
-    manifest_name = f"{platform_prefix}-manifest.json"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:66.0) Gecko/20100101 Firefox/66.0",
-        "Accept-Encoding": "*",
-        "Connection": "keep-alive"
-    }
-    for url in [
-        f"https://github.com/{repo}/releases/download/v{current_AA_version}/{manifest_name}",
-        f"https://github.com/{repo}/releases/latest/download/{manifest_name}",
-    ]:
-        try:
-            resp = requests.get(url, timeout=60, headers=headers, allow_redirects=True)
-            resp.raise_for_status()
-            return resp.json(), url.rsplit("/", 1)[0]
-        except Exception:
-            continue
-    raise RuntimeError(f"Could not fetch {manifest_name} from GitHub releases")
+    return _fetch_manifest_extracted(platform_prefix, current_AA_version)
 
-
-# get download info from manifest
 def _get_download_info(manifest, base_url, asset_key):
-    """Return (list_of_urls, total_size) for a given asset key."""
-    entry = manifest[asset_key]
-    urls = [f"{base_url}/{part}" for part in entry["parts"]]
-    return urls, entry["total_size"]
+    return _get_download_info_extracted(manifest, base_url, asset_key)
 
 
 # download environment
 def download_environment(env_name, model_vars, skip_ask=False):
+    from addaxai.models.download import fetch_manifest, get_download_info
+    from addaxai.processing.postprocess import format_size as _format_size
 
-    # download
+    env_dir = os.path.join(AddaxAI_files, "envs")
+
+    # linux installs during setup
+    if os.name != 'nt' and platform.system() != 'Darwin':
+        return False
+
+    # determine platform params for size display in confirmation dialog
+    platform_prefix = "windows" if os.name == 'nt' else "macos"
+    asset_key = f"{platform_prefix}-env-{env_name}.zip" if os.name == 'nt' else f"macos-env-{env_name}.tar.xz"
+
     try:
+        manifest, base_url = fetch_manifest(platform_prefix, current_AA_version)
+        _, total_size = get_download_info(manifest, base_url, asset_key)
+    except Exception:
+        total_size = 0
 
-        env_dir = os.path.join(AddaxAI_files, "envs")
-        # set environment variables
-        if os.name == 'nt': # windows
-            platform_prefix = "windows"
-            asset_key = f"windows-env-{env_name}.zip"
-            filename = f"{env_name}.zip"
-        elif platform.system() == 'Darwin': # macos
-            import tarfile
-            platform_prefix = "macos"
-            asset_key = f"macos-env-{env_name}.tar.xz"
-            filename = f"{env_name}.tar.xz"
-        else: # linux
-            return False # linux install this during setup
+    # ask user
+    if not skip_ask:
+        if not mb.askyesno(["Download required", "Descarga necesaria", "Téléchargement requis"][i18n_lang_idx()],
+                        [f"The model you selected needs the virtual environment '{env_name}', which is not downloaded yet. It will take {_format_size(total_size)}"
+                        f" of storage. Do you want to download?", f"El envo {env_name} aún no se ha descargado."
+                        f" Ocupará {_format_size(total_size)} de almacenamiento. ¿Desea descargarlo?",
+                        f"Le modèle sélectionné requiert un environnement virtuel '{env_name}', qui n'est pas encore téléchargé. Il occupera {_format_size(total_size)}"
+                        f" d'espace disque. Souhaitez-vous le télécharger?"][i18n_lang_idx()]):
+            return False
 
-        # set headers to trick host to thinking we are a browser
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:66.0) Gecko/20100101 Firefox/66.0",
-            "Accept-Encoding": "*",
-            "Connection": "keep-alive"
-        }
+    # GUI progress window
+    download_popup = EnvDownloadProgressWindow(
+        env_title=env_name, total_size_str=_format_size(total_size),
+        master=root, scale_factor=scale_factor, padx=PADX, pady=PADY,
+        green_primary=green_primary, open_nosleep_func=open_nosleep_page)
+    download_popup.open()
 
-        # fetch manifest and get download info
-        manifest, base_url = _fetch_manifest(platform_prefix)
-        part_urls, total_size = _get_download_info(manifest, base_url, asset_key)
-
-        # check if the user wants to download
-        if not skip_ask:
-            if not mb.askyesno(["Download required", "Descarga necesaria", "Téléchargement requis"][i18n_lang_idx()],
-                            [f"The model you selected needs the virtual environment '{env_name}', which is not downloaded yet. It will take {format_size(total_size)}"
-                            f" of storage. Do you want to download?", f"El envo {env_name} aún no se ha descargado."
-                            f" Ocupará {format_size(total_size)} de almacenamiento. ¿Desea descargarlo?",
-                            f"Le modèle sélectionné requiert un environnement virtuel '{env_name}', qui n'est pas encore téléchargé. Il occupera {format_size(total_size)}"
-                            f" d'espace disque. Souhaitez-vous le télécharger?"][i18n_lang_idx()]):
-                return False
-
-        # if yes, initiate download and show progress
-        progress_bar = tqdm(total=total_size, unit='B', unit_scale=True)
-        download_popup = EnvDownloadProgressWindow(env_title = env_name, total_size_str = format_size(total_size), master=root, scale_factor=scale_factor, padx=PADX, pady=PADY, green_primary=green_primary, open_nosleep_func=open_nosleep_page)
-        download_popup.open()
-        file_path = os.path.join(env_dir, filename)
-        with open(file_path, 'wb') as file:
-            for part_url in part_urls:
-                response = requests.get(part_url, stream=True, timeout=60, headers=headers)
-                response.raise_for_status()
-                for chunk in response.iter_content(chunk_size=65536):
-                    if chunk:
-                        file.write(chunk)
-                        progress_bar.update(len(chunk))
-                        percentage_done = progress_bar.n / total_size
-                        download_popup.update_download_progress(percentage_done)
-        progress_bar.close()
-        logger.info("Download successful. File saved at: %s", file_path)
-
-        # After download, begin extraction
-        if filename.endswith(".tar.xz"):
-            # Extract the .tar.xz file
-            with tarfile.open(file_path, "r:xz") as tar:
-                # Get the total number of files to be extracted
-                total_files = len(tar.getnames())
-                extraction_progress_bar = tqdm(total=total_files, unit='file', desc="Extracting")
-
-                # Extract each file and update the extraction progress
-                for member in tar:
-                    tar.extract(member, path=env_dir)
-                    extraction_progress_bar.update(1)
-                    extraction_progress_percentage = extraction_progress_bar.n / total_files
-                    download_popup.update_extraction_progress(extraction_progress_percentage)
-                extraction_progress_bar.close()
-            download_popup.close()
-            logger.info("Extraction successful. Files extracted to: %s", env_dir)
-
-            # Remove the .tar.xz file after extraction
-            try:
-                os.remove(file_path)
-                logger.info("Removed the .tar.xz file: %s", file_path)
-            except Exception as e:
-                logger.warning("Error removing file: %s", e)
-
-        if filename.endswith(".zip"):
-            import zipfile
-            # open the zip file for extraction
-            with zipfile.ZipFile(file_path, 'r') as zip_ref:
-                # get the total number of files to be extracted
-                total_files = len(zip_ref.namelist())
-                extraction_progress_bar = tqdm(total=total_files, unit='file', desc="Extracting")
-
-                # extract each file and update the extraction progress
-                for member in zip_ref.namelist():
-                    zip_ref.extract(member, path=env_dir)
-                    extraction_progress_bar.update(1)
-                    extraction_progress_percentage = extraction_progress_bar.n / total_files
-                    download_popup.update_extraction_progress(extraction_progress_percentage)
-                extraction_progress_bar.close()
-            download_popup.close()
-            logger.info("Extraction successful. Files extracted to: %s", env_dir)
-
-            # Remove the zip file after extraction
-            try:
-                os.remove(file_path)
-                logger.info("Removed the zip file: %s", file_path)
-            except Exception as e:
-                logger.warning("Error removing file: %s", e)
-
-        # return success
+    try:
+        _download_and_extract_env(
+            env_name=env_name,
+            env_dir=env_dir,
+            current_version=current_AA_version,
+            download_progress_callback=download_popup.update_download_progress,
+            extraction_progress_callback=download_popup.update_extraction_progress,
+        )
+        download_popup.close()
         return True
-
-    # catch errors
     except Exception as error:
         logger.error("ERROR: %s", error, exc_info=True)
         try:
-            # remove incomplete archive
-            if os.path.isfile(file_path):
-                os.remove(file_path)
-
-            # remove incomplete extracted dir
             extracted_dir = os.path.join(env_dir, f"env-{env_name}")
             if os.path.isdir(extracted_dir):
                 shutil.rmtree(extracted_dir)
-
-            # close popup
             download_popup.close()
-
-        except UnboundLocalError:
-            # file_path is not set, meaning there is no incomplete download
+        except Exception:
             pass
-
-        # show internet options
         show_download_error_window_env(env_name, env_dir, model_vars)
+        return False
 
 
 ##############################################
