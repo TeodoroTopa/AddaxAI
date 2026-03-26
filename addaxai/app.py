@@ -206,12 +206,7 @@ from addaxai.ui.simple.simple_window import build_simple_mode
 from addaxai.core.state import AppState
 from addaxai.core.logging import setup_logging
 from addaxai.core.events import event_bus
-from addaxai.core.event_types import (DEPLOY_STARTED, DEPLOY_PROGRESS, DEPLOY_FINISHED,
-                                       DEPLOY_ERROR, DEPLOY_CANCELLED,
-                                       CLASSIFY_STARTED, CLASSIFY_PROGRESS, CLASSIFY_FINISHED,
-                                       CLASSIFY_ERROR,
-                                       POSTPROCESS_STARTED,
-                                       POSTPROCESS_FINISHED, POSTPROCESS_ERROR)
+
 
 import logging
 logger = logging.getLogger("addaxai.gui")
@@ -246,622 +241,10 @@ suffixes_for_sim_none = [" - just show me where the animals are",
 ############# BACKEND FUNCTIONS #############
 #############################################
 
-# post-process files
-def postprocess(src_dir, dst_dir, thresh, sep, keep_series, keep_series_seconds, file_placement, sep_conf, vis, crp, exp, plt, exp_format, data_type, keep_series_species=None):
-    # log
-    logger.debug("EXECUTED: %s", sys._getframe().f_code.co_name)
-
-    # update progress window via event bus
-    event_bus.emit(POSTPROCESS_PROGRESS, pct=0.0, message="Initializing postprocessing",
-                   process=f"{data_type}_pst", status="load")
-
-    # plt needs csv files so make sure to produce them, even if the user didn't specify
-    # if the user didn't specify to export to csv, make sure to remove them later on
-    remove_csv = False
-    if plt and not exp:
-        # except if the csv are already created ofcourse
-        if not (os.path.isfile(os.path.join(dst_dir, "results_detections.csv")) and
-                os.path.isfile(os.path.join(dst_dir, "results_files.csv"))):
-            exp = True
-            exp_format = t('dpd_exp_format')[1] # CSV
-            remove_csv = True
-
-    # get correct json file
-    if data_type == "img":
-        recognition_file = os.path.join(src_dir, "image_recognition_file.json")
-    else:
-        recognition_file = os.path.join(src_dir, "video_recognition_file.json")
-
-    # check if user is not in the middle of an annotation session
-    if data_type == "img" and get_hitl_var_in_json(recognition_file) == "in-progress":
-        if not mb.askyesno(t('msg_verification_in_progress_title'),
-                           [f"Your verification session is not yet done. You can finish the session by clicking 'Continue' at '{t('lbl_hitl_main')}', "
-                            "or just continue to post-process with the results as they are now.\n\nDo you want to continue to post-process?",
-                            f"La sesión de verificación aún no ha finalizado. Puede finalizarla haciendo clic en 'Continuar' en '{t('lbl_hitl_main')}', "
-                            "o simplemente continuar con el posprocesamiento con los resultados tal como están ahora.\n\n¿Quieres continuar con el posprocesamiento?",
-                            f"Votre session de vérification n'est pas encore terminée. Vous pouvez la compléter en cliquant sur '{t('lbl_hitl_main')}', "
-                            "ou juste continuer le post-traitement avec les résultats actuels.\n\nSouhaitez-vous continuer le post-traitement?"][i18n_lang_idx()]):
-            return
-
-    # init vars
-    start_time = time.time()
-    nloop = 1
-
-    # warn user
-    if data_type == "vid":
-        if vis or crp or plt:
-            check_json_presence_and_warn_user(t('visualize_crop_or_plot'),
-                                              t('visualizing_cropping_or_plotting'),
-                                              t('visualization_cropping_and_plotting'))
-            vis, crp, plt = [False] * 3
-
-    # fetch label map
-    label_map = fetch_label_map_from_json(recognition_file)
-    inverted_label_map = {v: k for k, v in label_map.items()}
-
-    # create list with colours for visualisation
-    if vis:
-        colors = ["fuchsia", "blue", "orange", "yellow", "green", "red", "aqua", "navy", "teal", "olive", "lime", "maroon", "purple"]
-        colors = colors * 30
-
-    # make sure json has relative paths
-    json_paths_converted = False
-    if check_json_paths(recognition_file, var_choose_folder.get()) != "relative":
-        make_json_relative(recognition_file, var_choose_folder.get())
-        json_paths_converted = True
-
-    # set cancel bool
-    state.cancel_var = False
-
-    # open json file
-    with open(recognition_file) as image_recognition_file_content:
-        data = json.load(image_recognition_file_content)
-    n_images = len(data['images'])
-
-    # --- series support: build timestamp index once for efficiency ----
-    if keep_series:
-        try:
-            _file_list_for_index = [img['file'] for img in data.get('images', [])]
-            timestamp_index = build_image_timestamp_index(src_dir, _file_list_for_index)
-        except Exception:
-            timestamp_index = {}
-    # used to avoid moving the same original file multiple times
-    already_moved_files = set()
-
-    # initialise the csv files
-    # csv files are always created, no matter what the user specified as export format
-    # these csv files are then converted to the desired format and deleted, if required
-    if exp:
-        # for files
-        csv_for_files = os.path.join(dst_dir, "results_files.csv")
-        if not os.path.isfile(csv_for_files):
-            df = pd.DataFrame(list(), columns=["absolute_path", "relative_path", "data_type", "n_detections", "file_height", "file_width", "max_confidence", "human_verified",
-                                               'DateTimeOriginal', 'DateTime', 'DateTimeDigitized', 'Latitude', 'Longitude', 'GPSLink', 'Altitude', 'Make',
-                                               'Model', 'Flash', 'ExifOffset', 'ResolutionUnit', 'YCbCrPositioning', 'XResolution', 'YResolution',
-                                               'ExifVersion', 'ComponentsConfiguration', 'FlashPixVersion', 'ColorSpace', 'ExifImageWidth',
-                                               'ISOSpeedRatings', 'ExifImageHeight', 'ExposureMode', 'WhiteBalance', 'SceneCaptureType',
-                                               'ExposureTime', 'Software', 'Sharpness', 'Saturation', 'ReferenceBlackWhite'])
-            df.to_csv(csv_for_files, encoding='utf-8', index=False)
-
-        # for detections
-        csv_for_detections = os.path.join(dst_dir, "results_detections.csv")
-        if not os.path.isfile(csv_for_detections):
-            df = pd.DataFrame(list(), columns=["absolute_path", "relative_path", "data_type", "label", "confidence", "human_verified", "bbox_left",
-                                               "bbox_top", "bbox_right", "bbox_bottom", "file_height", "file_width", 'DateTimeOriginal', 'DateTime',
-                                               'DateTimeDigitized', 'Latitude', 'Longitude', 'GPSLink', 'Altitude', 'Make', 'Model', 'Flash', 'ExifOffset',
-                                               'ResolutionUnit', 'YCbCrPositioning', 'XResolution', 'YResolution', 'ExifVersion', 'ComponentsConfiguration',
-                                               'FlashPixVersion', 'ColorSpace', 'ExifImageWidth', 'ISOSpeedRatings', 'ExifImageHeight', 'ExposureMode',
-                                               'WhiteBalance', 'SceneCaptureType', 'ExposureTime', 'Software', 'Sharpness', 'Saturation', 'ReferenceBlackWhite'])
-            df.to_csv(csv_for_detections, encoding='utf-8', index=False)
-
-    # set error log path
-    state.postprocessing_error_log = os.path.join(dst_dir, "postprocessing_error_log.txt")
-
-    # count the number of rows to make sure it doesn't exceed the limit for an excel sheet
-    if exp and exp_format == t('dpd_exp_format')[0]: # if exp_format is the first option in the dropdown menu -> XLSX
-        n_rows_files = 1
-        n_rows_detections = 1
-        for image in data['images']:
-            n_rows_files += 1
-            if 'detections' in image:
-                for detection in image['detections']:
-                    if detection["conf"] >= thresh:
-                        n_rows_detections += 1
-        if n_rows_detections > 1048576 or n_rows_files > 1048576:
-            mb.showerror(t('msg_too_many_rows'),
-                         ["The XLSX file you are trying to create is too large!\n\nThe maximum number of rows in an XSLX file is "
-                          f"1048576, while you are trying to create a sheet with {max(n_rows_files, n_rows_detections)} rows.\n\nIf"
-                          " you require the results in XLSX format, please run the process on smaller chunks so that it doesn't "
-                          f"exceed Microsoft's row limit. Or choose CSV as {t('lbl_exp_format')} in advanced mode.",
-                          "¡El archivo XLSX que está intentando crear es demasiado grande!\n\nEl número máximo de filas en un archivo"
-                          f" XSLX es 1048576, mientras que usted está intentando crear una hoja con {max(n_rows_files, n_rows_detections)}"
-                          " filas.\n\nSi necesita los resultados en formato XLSX, ejecute el proceso en trozos más pequeños para que no "
-                          f"supere el límite de filas de Microsoft. O elija CSV como {t('lbl_exp_format')} en modo avanzado.",
-                          "Le fichier XLSX que vous tenter de créer est trop long!\n\nLe nombre maximum de lignes dans un fichier XSLX est "
-                          f"1048576, alors que vous tenter de créer une feuille avec {max(n_rows_files, n_rows_detections)} lignes.\n\nSi"
-                          " vous souhaitez des résultats sous format XLSX, svp exécuter le processus sur de plus petites portions de sorte à ne pas "
-                          f"excéder la limite de lignes de Microsoft. Ou choisissez le format CSV comme {t('lbl_exp_format')} dans le mode avancé."][i18n_lang_idx()])
-            return
-
-    # loop through images
-    for image in data['images']:
-
-        # cancel process if required
-        if state.cancel_var:
-            break
-
-        # check for failure
-        if "failure" in image:
-
-            # write warnings to log file
-            with open(state.postprocessing_error_log, 'a+') as f:
-                f.write(f"File '{image['file']}' was skipped by post processing features because '{image['failure']}'\n")
-            f.close()
-
-            # calculate stats
-            elapsed_time_sep = str(datetime.timedelta(seconds=round(time.time() - start_time)))
-            time_left_sep = str(datetime.timedelta(seconds=round(((time.time() - start_time) * n_images / nloop) - (time.time() - start_time))))
-            percentage = (nloop / n_images) * 100
-            event_bus.emit(POSTPROCESS_PROGRESS, pct=float(percentage), message=f"Processing: {nloop}/{n_images}",
-                           process=f"{data_type}_pst", status="running",
-                           cur_it=nloop, tot_it=n_images,
-                           time_ela=elapsed_time_sep, time_rem=time_left_sep,
-                           cancel_func=cancel)
-
-            nloop += 1
-            root.update()  # process tkinter event loop for GUI responsiveness
-
-            # skip this iteration
-            continue
-
-        # get image info
-        file = image['file']
-        detections_list = image['detections']
-        n_detections = len(detections_list)
-
-        # check if it has been manually verified
-        manually_checked = False
-        if 'manually_checked' in image:
-            if image['manually_checked']:
-                manually_checked = True
-
-        # init vars
-        max_detection_conf = 0.0
-        unique_labels = []
-        bbox_info = []
-
-        # open files
-        if vis or crp or exp:
-            if data_type == "img":
-                im_to_vis = cv2.imread(os.path.normpath(os.path.join(src_dir, file)))
-
-                # check if that image was able to be loaded
-                if im_to_vis is None:
-                    with open(state.postprocessing_error_log, 'a+') as f:
-                        f.write(f"File '{image['file']}' was skipped by post processing features. This might be due to the file being moved or deleted after analysis, or because of a special character in the file path.\n")
-                    f.close()
-                    elapsed_time_sep = str(datetime.timedelta(seconds=round(time.time() - start_time)))
-                    time_left_sep = str(datetime.timedelta(seconds=round(((time.time() - start_time) * n_images / nloop) - (time.time() - start_time))))
-                    percentage = (nloop / n_images) * 100
-                    event_bus.emit(POSTPROCESS_PROGRESS, pct=float(percentage), message=f"Processing: {nloop}/{n_images}",
-                                   process=f"{data_type}_pst", status="running",
-                                   cur_it=nloop, tot_it=n_images,
-                                   time_ela=elapsed_time_sep, time_rem=time_left_sep,
-                                   cancel_func=cancel)
-                    nloop += 1
-                    root.update()  # process tkinter event loop for GUI responsiveness
-                    continue
-
-                im_to_crop_path = os.path.join(src_dir, file)
-
-                # load old image and extract EXIF
-                origImage = Image.open(os.path.join(src_dir, file))
-                try:
-                    exif = origImage.info['exif']
-                except:
-                    exif = None
-
-                origImage.close()
-            else:
-                vid = cv2.VideoCapture(os.path.join(src_dir, file))
-
-            # read image dates etc
-            if exp:
-
-                # try to read metadata
-                try:
-                    img_for_exif = PIL.Image.open(os.path.join(src_dir, file))
-                    metadata = {
-                        PIL.ExifTags.TAGS[k]: v
-                        for k, v in img_for_exif._getexif().items()
-                        if k in PIL.ExifTags.TAGS
-                    }
-                    img_for_exif.close()
-                except:
-                    metadata = {'GPSInfo': None,
-                                 'ResolutionUnit': None,
-                                 'ExifOffset': None,
-                                 'Make': None,
-                                 'Model': None,
-                                 'DateTime': None,
-                                 'YCbCrPositioning': None,
-                                 'XResolution': None,
-                                 'YResolution': None,
-                                 'ExifVersion': None,
-                                 'ComponentsConfiguration': None,
-                                 'ShutterSpeedValue': None,
-                                 'DateTimeOriginal': None,
-                                 'DateTimeDigitized': None,
-                                 'FlashPixVersion': None,
-                                 'UserComment': None,
-                                 'ColorSpace': None,
-                                 'ExifImageWidth': None,
-                                 'ExifImageHeight': None}
-
-                # try to add GPS data
-                try:
-                    gpsinfo = gpsphoto.getGPSData(os.path.join(src_dir, file))
-                    if 'Latitude' in gpsinfo and 'Longitude' in gpsinfo:
-                        gpsinfo['GPSLink'] = f"https://maps.google.com/?q={gpsinfo['Latitude']},{gpsinfo['Longitude']}"
-                except:
-                    gpsinfo = {'Latitude': None,
-                               'Longitude': None,
-                               'GPSLink': None}
-
-                # combine metadata and gps data
-                exif_data = {**metadata, **gpsinfo}
-
-                # check if datetime values can be found
-                exif_params = []
-                for param in ['DateTimeOriginal', 'DateTime', 'DateTimeDigitized', 'Latitude', 'Longitude', 'GPSLink', 'Altitude', 'Make', 'Model',
-                              'Flash', 'ExifOffset', 'ResolutionUnit', 'YCbCrPositioning', 'XResolution', 'YResolution', 'ExifVersion',
-                              'ComponentsConfiguration', 'FlashPixVersion', 'ColorSpace', 'ExifImageWidth', 'ISOSpeedRatings',
-                              'ExifImageHeight', 'ExposureMode', 'WhiteBalance', 'SceneCaptureType', 'ExposureTime', 'Software',
-                              'Sharpness', 'Saturation', 'ReferenceBlackWhite']:
-                    try:
-                        if param.startswith('DateTime'):
-                            datetime_raw = str(exif_data[param])
-                            param_value = datetime.datetime.strptime(datetime_raw, '%Y:%m:%d %H:%M:%S').strftime('%d/%m/%y %H:%M:%S')
-                        else:
-                            param_value = str(exif_data[param])
-                    except:
-                        param_value = "NA"
-                    exif_params.append(param_value)
-
-        # loop through detections
-        if 'detections' in image:
-            for detection in image['detections']:
-
-                # get confidence
-                conf = detection["conf"]
-
-                # write max conf
-                if manually_checked:
-                    max_detection_conf = "NA"
-                elif conf > max_detection_conf:
-                    max_detection_conf = conf
-
-                # if above user specified thresh
-                if conf >= thresh:
-
-                    # change conf to string for verified images
-                    if manually_checked:
-                        conf = "NA"
-
-                    # get detection info
-                    category = detection["category"]
-                    label = label_map[category]
-                    if sep:
-                        unique_labels.append(label)
-                        unique_labels = sorted(list(set(unique_labels)))
-
-                    # get bbox info
-                    if vis or crp or exp:
-                        if data_type == "img":
-                            height, width = im_to_vis.shape[:2]
-                        else:
-                            height = int(vid.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                            width = int(vid.get(cv2.CAP_PROP_FRAME_WIDTH))
-
-                        w_box = detection['bbox'][2]
-                        h_box = detection['bbox'][3]
-                        xo = detection['bbox'][0] + (w_box/2)
-                        yo = detection['bbox'][1] + (h_box/2)
-                        left = int(round(detection['bbox'][0] * width))
-                        top = int(round(detection['bbox'][1] * height))
-                        right = int(round(w_box * width)) + left
-                        bottom = int(round(h_box * height)) + top
-
-                        # store in list
-                        bbox_info.append([label, conf, manually_checked, left, top, right, bottom, height, width, xo, yo, w_box, h_box])
-
-        # collect info to append to csv files
-        if exp:
-
-            # read shape again - this is a temporary solution
-            # read in the height and width of the images and videos, as this was giving a bunch of bugs...
-            if data_type == "img":
-                img = cv2.imread(os.path.normpath(os.path.join(src_dir, file)))
-                height, width = img.shape[:2]
-            else:
-                cap = cv2.VideoCapture(os.path.join(src_dir, file))
-                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                cap.release()
-
-            # file info CSV
-            row = pd.DataFrame([[src_dir, file, data_type, len(bbox_info), height, width, max_detection_conf, manually_checked, *exif_params]])
-            row.to_csv(csv_for_files, encoding='utf-8', mode='a', index=False, header=False)
-
-            # detections info CSV
-            rows = []
-            for bbox in bbox_info:
-                row = [src_dir, file, data_type, *bbox[:9], *exif_params]
-                rows.append(row)
-            rows = pd.DataFrame(rows)
-            rows.to_csv(csv_for_detections, encoding='utf-8', mode='a', index=False, header=False)
-
-            # separate files (with optional "keep whole series" feature)
-            if sep:
-                if n_detections == 0:
-                    detection_type = "empty"
-                else:
-                    if len(unique_labels) > 1:
-                        detection_type = "_".join(unique_labels)
-                    elif len(unique_labels) == 0:
-                        detection_type = "empty"
-                    else:
-                        detection_type = label
-
-                # keep-series configuration
-                should_keep_series = False
-                if keep_series:
-                    # allow caller to pass the list; otherwise fall back to persisted GUI setting
-                    if keep_series_species is None:
-                        keep_series_species = global_vars.get('var_keep_series_species', [])
-
-                    labels_in_detection = set(unique_labels) if n_detections > 0 else set()
-
-                    # Interpret selection relative to CURRENT cls model
-                    try:
-                        cur_model_vars = load_model_vars(model_type="cls")
-                        cur_model_classes = set(cur_model_vars.get("all_classes", []) or [])
-                    except Exception:
-                        cur_model_classes = set()
-
-                    keep_series_species_effective = [c for c in keep_series_species if c in cur_model_classes]
-                    keep_series_species_effective_set = set(keep_series_species_effective)
-
-                    # If user selected trigger species *that exist in the current model*: filter by those.
-                    # Otherwise (no overlap): treat as "Any animal detection".
-                    if keep_series_species_effective:
-                        should_keep_series = bool(labels_in_detection.intersection(keep_series_species_effective_set))
-                    else:
-                        should_keep_series = bool(labels_in_detection.difference({'person', 'vehicle'}))
-
-                if should_keep_series:
-                    # move/copy the whole series (files within +/- window_seconds)
-                    series_files = find_series_images(file, timestamp_index, window_seconds=keep_series_seconds)
-                    for sf in series_files:
-                        if sf in already_moved_files:
-                            continue
-                        moved_rel = move_files(sf, detection_type, file_placement, max_detection_conf, sep_conf,
-                                               dst_dir, src_dir, manually_checked)
-                        # record original relative path as moved so we don't try to move it again
-                        already_moved_files.add(sf)
-                        # if this is the current loop item, update the 'file' variable used later for visualization
-                        if sf == file:
-                            file = moved_rel
-                else:
-                    # default behaviour: move/copy single file
-                    if file not in already_moved_files:
-                        orig_file_for_move = file
-                        file = move_files(orig_file_for_move, detection_type, file_placement, max_detection_conf,
-                                          sep_conf, dst_dir, src_dir, manually_checked)
-                        already_moved_files.add(orig_file_for_move)
-
-        # visualize images
-        if vis and len(bbox_info) > 0:
-
-            # blur people
-            if var_vis_blur.get():
-                for bbox in bbox_info:
-                    if bbox[0] == "person":
-                        im_to_vis = blur_box(im_to_vis, *bbox[3:7], bbox[8], bbox[7])
-
-            # draw bounding boxes
-            if var_vis_bbox.get():
-                for bbox in bbox_info:
-                    if manually_checked:
-                        vis_label = f"{bbox[0]} (verified)"
-                    else:
-                        conf_label = round(bbox[1], 2) if round(bbox[1], 2) != 1.0 else 0.99
-                        vis_label = f"{bbox[0]} {conf_label}"
-                    color = colors[int(inverted_label_map[bbox[0]])]
-                    bb.add(im_to_vis, *bbox[3:7], vis_label, color, size = t('dpd_vis_size').index(var_vis_size.get())) # convert string to index, e.g. "small" -> 0
-
-            im = os.path.join(dst_dir, file)
-            Path(os.path.dirname(im)).mkdir(parents=True, exist_ok=True)
-            cv2.imwrite(im, im_to_vis)
-
-            # load new image and save exif
-            if (exif != None):
-                image_new = Image.open(im)
-                image_new.save(im, exif=exif)
-                image_new.close()
-
-        # crop images
-        if crp and len(bbox_info) > 0:
-            counter = 1
-            for bbox in bbox_info:
-
-                # if files have been moved
-                if sep:
-                    im_to_crp = Image.open(os.path.join(dst_dir,file))
-                else:
-                    im_to_crp = Image.open(im_to_crop_path)
-                crp_im = im_to_crp.crop((bbox[3:7]))
-                im_to_crp.close()
-                filename, file_extension = os.path.splitext(file)
-                im_path = os.path.join(dst_dir, filename + '_crop' + str(counter) + '_' + bbox[0] + file_extension)
-                Path(os.path.dirname(im_path)).mkdir(parents=True, exist_ok=True)
-                crp_im.save(im_path)
-                counter += 1
-
-                 # load new image and save exif
-                if (exif != None):
-                    image_new = Image.open(im_path)
-                    image_new.save(im_path, exif=exif)
-                    image_new.close()
-
-        # calculate stats and emit progress via event bus
-        elapsed_time_sep = str(datetime.timedelta(seconds=round(time.time() - start_time)))
-        time_left_sep = str(datetime.timedelta(seconds=round(((time.time() - start_time) * n_images / nloop) - (time.time() - start_time))))
-        percentage = (nloop / n_images) * 100
-        event_bus.emit(POSTPROCESS_PROGRESS, pct=float(percentage), message=f"Processing: {nloop}/{n_images}",
-                       process=f"{data_type}_pst", status="running",
-                       cur_it=nloop, tot_it=n_images,
-                       time_ela=elapsed_time_sep, time_rem=time_left_sep,
-                       cancel_func=cancel)
-
-        nloop += 1
-        root.update()  # process tkinter event loop for GUI responsiveness
-
-    # create summary csv
-    if exp:
-        csv_for_summary = os.path.join(dst_dir, "results_summary.csv")
-        if os.path.exists(csv_for_summary):
-            os.remove(csv_for_summary)
-        det_info = pd.DataFrame(pd.read_csv(csv_for_detections, dtype=dtypes, low_memory=False))
-        summary = pd.DataFrame(det_info.groupby(['label', 'data_type']).size().sort_values(ascending=False).reset_index(name='n_detections'))
-        summary.to_csv(csv_for_summary, encoding='utf-8', mode='w', index=False, header=True)
-
-    # convert csv to xlsx if required
-    if exp and exp_format == t('dpd_exp_format')[0]: # if exp_format is the first option in the dropdown menu -> XLSX
-        xlsx_path = os.path.join(dst_dir, "results.xlsx")
-
-        # check if the excel file exists, e.g. when processing both img and vid
-        dfs = []
-        for result_type in ['detections', 'files', 'summary']:
-            csv_path = os.path.join(dst_dir, f"results_{result_type}.csv")
-            if os.path.isfile(xlsx_path):
-
-                #  if so, add new rows to existing ones
-                df_xlsx = pd.read_excel(xlsx_path, sheet_name=result_type)
-                df_csv = pd.read_csv(os.path.join(dst_dir, f"results_{result_type}.csv"), dtype=dtypes, low_memory=False)
-                df = pd.concat([df_xlsx, df_csv], ignore_index=True)
-            else:
-                df = pd.read_csv(os.path.join(dst_dir, f"results_{result_type}.csv"), dtype=dtypes, low_memory=False)
-            dfs.append(df)
-
-            # plt needs the csv's, so don't remove just yet
-            if not plt:
-                if os.path.isfile(csv_path):
-                    os.remove(csv_path)
-
-        # overwrite rows to xlsx file
-        with pd.ExcelWriter(xlsx_path, engine='openpyxl') as writer:
-            for idx, result_type in enumerate(['detections', 'files', 'summary']):
-                df = dfs[idx]
-                if result_type in ['detections', 'files']:
-                    df['DateTimeOriginal'] = pd.to_datetime(df['DateTimeOriginal'], format='%d/%m/%y %H:%M:%S')
-                    df['DateTime'] = pd.to_datetime(df['DateTime'], format='%d/%m/%y %H:%M:%S')
-                    df['DateTimeDigitized'] = pd.to_datetime(df['DateTimeDigitized'], format='%d/%m/%y %H:%M:%S')
-                df.to_excel(writer, sheet_name=result_type, index=None, header=True)
-
-    # convert csv to tsv if required
-    if exp and exp_format == t('dpd_exp_format')[3]: # if exp_format is the third option in the dropdown menu -> TSV
-
-        # Check if the TSV file exists, e.g., when processing both img and vid
-        csv_path = os.path.join(dst_dir, "results_detections.csv")
-        tsv_path = os.path.join(dst_dir, "results_sensing_clues.tsv")
-
-        if os.path.isfile(tsv_path):  # Append if TSV exists
-            with open(csv_path, 'r', newline='') as csv_file, open(tsv_path, 'a', newline='') as tsv_file:
-                csv_reader = csv.reader(x.replace('\0', '') for x in csv_file)
-                tsv_writer = csv.writer(tsv_file, delimiter='\t')
-
-                csv_header = next(csv_reader)
-                idx_date, idx_lat, idx_lon = map(csv_header.index, ["DateTimeOriginal", "Latitude", "Longitude"])
-
-                for row in csv_reader:
-                    unique_id = generate_unique_id(row)
-                    formatted_date = format_datetime(row[idx_date])
-                    new_row = [unique_id, formatted_date, row[idx_lat], row[idx_lon], "AddaxAI"] + row
-                    tsv_writer.writerow(new_row)
-
-        else:  # Create new TSV file
-            with open(csv_path, 'r', newline='') as csv_file, open(tsv_path, 'w', newline='') as tsv_file:
-                csv_reader = csv.reader(x.replace('\0', '') for x in csv_file)
-                tsv_writer = csv.writer(tsv_file, delimiter='\t')
-
-                csv_header = next(csv_reader)
-                idx_date, idx_lat, idx_lon = map(csv_header.index, ["DateTimeOriginal", "Latitude", "Longitude"])
-
-                tsv_writer.writerow(["ID", "Date", "Lat", "Long", "Method"] + csv_header)
-
-                for row in csv_reader:
-                    unique_id = generate_unique_id(row)
-                    formatted_date = format_datetime(row[idx_date])
-                    new_row = [unique_id, formatted_date, row[idx_lat], row[idx_lon], "AddaxAI"] + row
-                    tsv_writer.writerow(new_row)
-
-        # plt needs the CSVs, so don't remove just yet
-        if not plt:
-            for result_type in ['detections', 'files', 'summary']:
-                csv_path = os.path.join(dst_dir, f"results_{result_type}.csv")
-                if os.path.isfile(csv_path):
-                    os.remove(csv_path)
-
-    # convert csv to coco format if required
-    if exp and exp_format == t('dpd_exp_format')[2]: # COCO
-
-        # init vars
-        coco_path = os.path.join(dst_dir, f"results_coco_{data_type}.json")
-        detections_df = pd.read_csv(os.path.join(dst_dir, "results_detections.csv"), dtype=dtypes, low_memory=False)
-        files_df = pd.read_csv(os.path.join(dst_dir, "results_files.csv"), dtype=dtypes, low_memory=False)
-
-        # convert csv to coco format
-        csv_to_coco(
-            detections_df=detections_df,
-            files_df=files_df,
-            output_path=coco_path,
-            version=str(current_AA_version)
-        )
-
-        # only plt needs the csv's, so if the user didn't specify plt, remove csvs
-        if not plt:
-            for result_type in ['detections', 'files', 'summary']:
-                csv_path = os.path.join(dst_dir, f"results_{result_type}.csv")
-                if os.path.isfile(csv_path):
-                    os.remove(csv_path)
-
-    # change json paths back, if converted earlier
-    if json_paths_converted:
-        make_json_absolute(recognition_file, var_choose_folder.get())
-
-    # let the user know it's done via event bus
-    event_bus.emit(POSTPROCESS_PROGRESS, pct=100.0, message="Postprocessing complete",
-                   process=f"{data_type}_pst", status="done")
-    root.update()  # process tkinter event loop for GUI responsiveness
-
-    # create graphs
-    if plt:
-        produce_plots(dst_dir)
-
-        # if user wants XLSX (0), COCO (2), or TSV (3) as output, or if user didn't specify exp all-
-        # together but the files were created for plt -> remove CSV files
-        if (exp and exp_format == t('dpd_exp_format')[0]) or \
-            (exp and exp_format == t('dpd_exp_format')[2]) or \
-            (exp and exp_format == t('dpd_exp_format')[3]) or \
-            remove_csv:
-            for result_type in ['detections', 'files', 'summary']:
-                csv_path = os.path.join(dst_dir, f"results_{result_type}.csv")
-                if os.path.isfile(csv_path):
-                    os.remove(csv_path)
-
-
-
+# postprocess() has been moved to addaxai/orchestration/pipeline.py
+# as _postprocess_inner() and run_postprocess().
+# start_postprocess() calls run_postprocess(); start_deploy() simple mode
+# calls _postprocess_inner() directly.
 
 
 # set data types for csv import so that the machine doesn't run out of memory with large files (>0.5M rows)
@@ -1218,13 +601,30 @@ countries = [
 # for simplicity, the same list is used for both english, spanish and french. I'll fix everything properly in the new version
 dpd_options_sppnet_location = countries
 
-# open progress window and initiate the post-process progress window
-def start_postprocess():
-    # log
-    logger.debug("EXECUTED: %s", sys._getframe().f_code.co_name)
+def _build_gui_callbacks(cancel_check):
+    """Build OrchestratorCallbacks wired to tkinter messageboxes and root.update."""
+    from addaxai.orchestration.callbacks import OrchestratorCallbacks
+    return OrchestratorCallbacks(
+        on_error=mb.showerror,
+        on_warning=mb.showwarning,
+        on_info=mb.showinfo,
+        on_confirm=mb.askyesno,
+        update_ui=root.update,
+        cancel_check=cancel_check,
+    )
 
-    # emit event
-    event_bus.emit(POSTPROCESS_STARTED)
+
+def _deploy_cancel_factory(proc):
+    """cancel_func_factory for detection/classification: cancel subprocess and reset UI."""
+    def _cancel():
+        cancel_deployment(proc)
+    return _cancel
+
+
+def start_postprocess():
+    logger.debug("EXECUTED: %s", sys._getframe().f_code.co_name)
+    from addaxai.orchestration.pipeline import run_postprocess
+    from addaxai.orchestration.context import PostprocessConfig
 
     # save settings for next time
     write_global_vars(AddaxAI_files, {
@@ -1246,122 +646,69 @@ def start_postprocess():
         "var_thresh": var_thresh.get()
     })
 
-    # fix user input
+    # read vars needed for ProgressWindow sizing before calling run_postprocess
     src_dir = var_choose_folder.get()
-    dst_dir = var_output_dir.get()
-    thresh = var_thresh.get()
-    sep = var_separate_files.get()
-    keep_series = var_keep_series.get()
-    keep_series_seconds = var_keep_series_seconds.get()
-    keep_series_species = global_vars.get('var_keep_series_species', [])
-    file_placement = var_file_placement.get()
-    sep_conf = var_sep_conf.get()
-    vis = var_vis_files.get()
-    crp = var_crp_files.get()
-    exp = var_exp.get()
-    plt = var_plt.get()
-    exp_format = var_exp_format.get()
+    img_json = os.path.isfile(os.path.join(src_dir, "image_recognition_file.json"))
+    vid_json = os.path.isfile(os.path.join(src_dir, "video_recognition_file.json"))
 
-    # init cancel variable
+    # build config
+    config = PostprocessConfig(
+        source_folder=src_dir,
+        dest_folder=var_output_dir.get(),
+        thresh=var_thresh.get(),
+        separate_files=var_separate_files.get(),
+        file_placement=var_file_placement.get(),
+        sep_conf=var_sep_conf.get(),
+        vis=var_vis_files.get(),
+        crp=var_crp_files.get(),
+        exp=var_exp.get(),
+        plt=var_plt.get(),
+        exp_format=var_exp_format.get(),
+        data_type="img",
+        vis_blur=var_vis_blur.get(),
+        vis_bbox=var_vis_bbox.get(),
+        vis_size_idx=t('dpd_vis_size').index(var_vis_size.get()),
+        keep_series=var_keep_series.get(),
+        keep_series_seconds=var_keep_series_seconds.get(),
+        keep_series_species=global_vars.get('var_keep_series_species', []),
+        current_version=current_AA_version,
+        lang_idx=i18n_lang_idx(),
+    )
+
+    callbacks = _build_gui_callbacks(cancel_check=lambda: state.cancel_var)
+
+    # open ProgressWindow only if JSON files exist
+    if img_json or vid_json:
+        processes = []
+        if img_json:
+            processes.append("img_pst")
+        if config.plt:
+            processes.append("plt")
+        if vid_json:
+            processes.append("vid_pst")
+        state.progress_window = ProgressWindow(
+            processes=processes, master=root,
+            scale_factor=scale_factor, padx=PADX, pady=PADY,
+            green_primary=green_primary)
+        state.progress_window.open()
+
     state.cancel_var = False
 
-    # check which json files are present
-    img_json = False
-    if os.path.isfile(os.path.join(src_dir, "image_recognition_file.json")):
-        img_json = True
-    vid_json = False
-    if os.path.isfile(os.path.join(src_dir, "video_recognition_file.json")):
-        vid_json = True
-    if not img_json and not vid_json:
-        event_bus.emit(POSTPROCESS_ERROR, message="No model output found")
-        mb.showerror(t('error'), t('msg_no_model_output'))
-        return
+    def _cancel():
+        state.cancel_var = True
 
-    # check if destination dir is valid and set to input dir if not
-    if dst_dir in ["", "/", "\\", ".", "~", ":"] or not os.path.isdir(dst_dir):
-        event_bus.emit(POSTPROCESS_ERROR, message="Destination folder not set or invalid")
-        mb.showerror(t('msg_dest_folder_not_set'),
-                        ["Destination folder not set.\n\n You have not specified where the post-processing results should be placed or the set "
-                        "folder does not exist. This is required.",
-                        "Carpeta de destino no establecida. No ha especificado dónde deben colocarse los resultados del postprocesamiento o la "
-                        "carpeta establecida no existe. Esto opción es obligatoria.",
-                        "Le répertoire de sortie n'est pas spécifié. Vous n'avez pas spécifié l'emplacement où enregistrer les résultats du post-traitement "
-                        "ou le répertoire n'existe pas. Ceci est obligatoire."][i18n_lang_idx()])
-        return
+    result = run_postprocess(
+        config=config,
+        callbacks=callbacks,
+        cancel_func=_cancel,
+        produce_plots_func=produce_plots,
+        base_path=AddaxAI_files,
+        cls_model_name=var_cls_model.get(),
+    )
 
-    # warn user if the original files will be overwritten with visualized files
-    if os.path.normpath(dst_dir) == os.path.normpath(src_dir) and vis and not sep:
-        if not mb.askyesno(t('msg_original_images_overwritten'),
-                      [f"WARNING! The visualized images will be placed in the folder with the original data: '{src_dir}'. By doing this, you will overwrite the original images"
-                      " with the visualized ones. Visualizing is permanent and cannot be undone. Are you sure you want to continue?",
-                      f"ATENCIÓN. Las imágenes visualizadas se colocarán en la carpeta con los datos originales: '{src_dir}'. Al hacer esto, se sobrescribirán las imágenes "
-                      "originales con las visualizadas. La visualización es permanente y no se puede deshacer. ¿Está seguro de que desea continuar?",
-                      f"ATTENTION ! Les images visualisées seront placées dans le dossier contenant les données d'origine : « {src_dir} ». Ce faisant, vous écraserez les images d'origine par celles visualisées. "
-                      "La visualisation est définitive et irréversible. Voulez-vous vraiment continuer ? "][i18n_lang_idx()]):
-            return
-
-    # warn user if images will be moved and visualized
-    if sep and file_placement == 1 and vis:
-        if not mb.askyesno(t('msg_original_images_overwritten'),
-                      [f"WARNING! You specified to visualize the original images. Visualizing is permanent and cannot be undone. If you don't want to visualize the original "
-                      f"images, please select 'Copy' as '{t('lbl_file_placement')}'. Are you sure you want to continue with the current settings?",
-                      "ATENCIÓN. Ha especificado visualizar las imágenes originales. La visualización es permanente y no puede deshacerse. Si no desea visualizar las "
-                      f"imágenes originales, seleccione 'Copiar' como '{t('lbl_file_placement')}'. ¿Está seguro de que desea continuar con la configuración actual?",
-                      "ATTENTION ! Vous avez spécifié de visualiser les images originales. La visualisation est définitive et irréversible. Si vous ne souhaitez pas visualiser les images originales, "
-                      f"sélectionnez « Copier » au format « {t('lbl_file_placement')} ». Voulez-vous vraiment conserver les paramètres actuels ?"][i18n_lang_idx()]):
-            return
-
-    # initialise progress window with processes
-    processes = []
-    if img_json:
-        processes.append("img_pst")
-    if plt:
-        processes.append("plt")
-    if vid_json:
-        processes.append("vid_pst")
-    state.progress_window = ProgressWindow(processes = processes, master=root, scale_factor=scale_factor, padx=PADX, pady=PADY, green_primary=green_primary)
-    state.progress_window.open()
-
-    try:
-        # postprocess images
-        if img_json:
-            postprocess(src_dir, dst_dir, thresh, sep, keep_series, keep_series_seconds, file_placement, sep_conf, vis, crp, exp, plt, exp_format, data_type = "img", keep_series_species=keep_series_species)
-
-        # postprocess videos
-        if vid_json and not state.cancel_var:
-            postprocess(src_dir, dst_dir, thresh, sep, keep_series, keep_series_seconds, file_placement, sep_conf, vis, crp, exp, plt, exp_format, data_type = "vid", keep_series_species=keep_series_species)
-
-        # complete
+    if result.success:
         complete_frame(fth_step)
-
-        # check if there are postprocessing errors written
-        if os.path.isfile(state.postprocessing_error_log):
-            mb.showwarning(t('warning'), [f"One or more files failed to be analysed by the model (e.g., corrupt files) and will be skipped by "
-                                                f"post-processing features. See\n\n'{state.postprocessing_error_log}'\n\nfor more info.",
-                                                f"Uno o más archivos no han podido ser analizados por el modelo (por ejemplo, ficheros corruptos) y serán "
-                                                f"omitidos por las funciones de post-procesamiento. Para más información, véase\n\n'{state.postprocessing_error_log}'",
-                                                "Un ou plusieurs fichiers n'ont pas pu être analysés par le modèle (par exemple, des fichiers corrompus) et seront"
-                                                f"ignorés lors du post-traitement. Voir\n\n'{state.postprocessing_error_log}'\n\npour plus d'info."][i18n_lang_idx()])
-
-        # emit finished event
-        event_bus.emit(POSTPROCESS_FINISHED)
-
-        # close progress window
-        state.progress_window.close()
-
-    except Exception as error:
-        # log error
-        logger.error("ERROR: %s", error, exc_info=True)
-
-        # emit error event
-        event_bus.emit(POSTPROCESS_ERROR, message=str(error))
-
-        # show error
-        mb.showerror(title=t('error'),
-                     message=t('an_error_occurred') + " (AddaxAI v" + current_AA_version + "): '" + str(error) + "'.",
-                     detail=traceback.format_exc())
-
-        # close window
+    if img_json or vid_json:
         state.progress_window.close()
 
 # function to produce graphs and maps
@@ -2004,202 +1351,31 @@ def fetch_taxon_mapping_df():
         return pd.read_csv(taxon_mapping_csv)
 
 # take MD json and classify detections
-def classify_detections(json_fpath, data_type, simple_mode = False):
-    # log
+def classify_detections(json_fpath, data_type, simple_mode=False):
     logger.debug("EXECUTED: %s", sys._getframe().f_code.co_name)
+    from addaxai.orchestration.pipeline import run_classification
+    from addaxai.orchestration.context import ClassifyConfig
 
-    # emit event
-    event_bus.emit(CLASSIFY_STARTED, process=f"{data_type}_cls")
+    config = ClassifyConfig(
+        base_path=AddaxAI_files,
+        cls_model_name=var_cls_model.get(),
+        disable_gpu=var_disable_GPU.get(),
+        cls_detec_thresh=var_cls_detec_thresh.get(),
+        cls_class_thresh=var_cls_class_thresh.get(),
+        smooth_cls_animal=var_smooth_cls_animal.get(),
+        tax_fallback=var_tax_fallback.get(),
+        temp_frame_folder=state.temp_frame_folder or "",
+        lang_idx=i18n_lang_idx(),
+    )
 
-    # show user it's loading via event bus
-    root.update()  # process tkinter event loop for GUI responsiveness
-    event_bus.emit(CLASSIFY_PROGRESS, pct=0.0, message="Loading classification model",
-                   process=f"{data_type}_cls", status="load")
-
-    # load model specific variables
-    model_vars = load_model_vars()
-    cls_model_fname = model_vars["model_fname"]
-    cls_model_type = model_vars["type"]
-    cls_model_fpath = os.path.join(AddaxAI_files, "models", "cls", var_cls_model.get(), cls_model_fname)
-
-    # check if taxonomic fallback should be the default
-    taxon_mapping_csv_is_present = taxon_mapping_csv_present()
-    taxon_mapping_is_default = model_vars.get("var_tax_fallback_default", False)
-
-    # if present take os-specific env else take general env
-    if os.name == 'nt': # windows
-        cls_model_env = model_vars.get("env-windows", model_vars["env"])
-    elif platform.system() == 'Darwin': # macos
-        cls_model_env = model_vars.get("env-macos", model_vars["env"])
-    else: # linux
-        cls_model_env = model_vars.get("env-linux", model_vars["env"])
-
-    # get param values
-    cls_tax_fallback = False
-    cls_tax_levels_idx = 0
-    if simple_mode:
-        cls_disable_GPU = False
-        cls_detec_thresh = model_vars["var_cls_detec_thresh_default"]
-        cls_class_thresh = model_vars["var_cls_class_thresh_default"]
-        cls_animal_smooth = False
-        if taxon_mapping_csv_is_present:
-            if taxon_mapping_is_default:
-                cls_tax_fallback =  True
-                # leave cls_tax_levels_idx at default 0 to let the model decide
-    else:
-        cls_disable_GPU = var_disable_GPU.get()
-        cls_detec_thresh = var_cls_detec_thresh.get()
-        cls_class_thresh = var_cls_class_thresh.get()
-        cls_animal_smooth = var_smooth_cls_animal.get()
-        if taxon_mapping_csv_is_present:
-            cls_tax_fallback = var_tax_fallback.get() # the users choice
-            cls_tax_levels_idx = model_vars["var_tax_levels_idx"] # take idx from model vars
-
-    # init paths
-    python_executable = get_python_interpreter(AddaxAI_files,cls_model_env)
-    inference_script = os.path.join(AddaxAI_files, "AddaxAI", "classification_utils", "model_types", cls_model_type, "classify_detections.py")
-
-    # create command
-    command_args = []
-    command_args.append(python_executable)
-    command_args.append(inference_script)
-    command_args.append(AddaxAI_files)
-    command_args.append(cls_model_fpath)
-    command_args.append(str(cls_detec_thresh))
-    command_args.append(str(cls_class_thresh))
-    command_args.append(str(cls_animal_smooth))
-    command_args.append(json_fpath)
-    if state.temp_frame_folder:
-        command_args.append(state.temp_frame_folder)
-    else:
-        command_args.append("None")
-    command_args.append(str(cls_tax_fallback))
-    command_args.append(str(cls_tax_levels_idx))
-
-    # adjust command for unix OS
-    if os.name != 'nt':
-        command_args = "'" + "' '".join(command_args) + "'"
-
-    # prepend with os-specific commands
-    if os.name == 'nt': # windows
-        if cls_disable_GPU:
-            command_args = ['set CUDA_VISIBLE_DEVICES="" &'] + command_args
-    elif platform.system() == 'Darwin': # macos
-        command_args = "export PYTORCH_ENABLE_MPS_FALLBACK=1 && " + command_args
-    else: # linux
-        if cls_disable_GPU:
-            command_args =  "CUDA_VISIBLE_DEVICES='' " + command_args
-        else:
-            command_args = "export PYTORCH_ENABLE_MPS_FALLBACK=1 && " + command_args
-
-    # log command
-    logger.debug("Command: %s", command_args)
-
-    # prepare process and cancel method per OS
-    if os.name == 'nt':
-        # run windows command
-        p = Popen(command_args,
-                  stdout=subprocess.PIPE,
-                  stderr=subprocess.STDOUT,
-                  bufsize=1,
-                  shell=True,
-                  universal_newlines=True)
-
-    else:
-        # run unix command
-        p = Popen(command_args,
-                  stdout=subprocess.PIPE,
-                  stderr=subprocess.STDOUT,
-                  bufsize=1,
-                  shell=True,
-                  universal_newlines=True,
-                  preexec_fn=os.setsid)
-
-    # reset subprocess output
-    state.subprocess_output = ""
-
-    # calculate metrics while running
-    status_setting = 'running'
-    elapsed_time = ""
-    processing_speed = ""
-    GPU_param = "Unknown"
-    for line in p.stdout:
-
-        # save output if something goes wrong
-        state.subprocess_output = state.subprocess_output + line
-        state.subprocess_output = state.subprocess_output[-1000:]
-
-        # log
-        logger.info(line.rstrip())
-
-        # catch early exit if there are no detections that meet the requirmentents to classify
-        if line.startswith("n_crops_to_classify is zero. Nothing to classify."):
-            event_bus.emit(CLASSIFY_ERROR, message="No animal detections that meet the criteria", process=f"{data_type}_cls")
-            mb.showinfo(t('information'), ["There are no animal detections that meet the criteria. You either "
-                                                "have selected images without any animals present, or you have set "
-                                                "your detection confidence threshold to high.", "No hay detecciones"
-                                                " de animales que cumplan los criterios. O bien ha seleccionado "
-                                                "imágenes sin presencia de animales, o bien ha establecido el umbral"
-                                                " de confianza de detección en alto.",
-                                                "Aucune détection d'animal ne rencontre les critères. Vous avez soit sélectionner "
-                                                "des images sans animaux présents, ou vous avez régler le seuil de confiance "
-                                                "de détection trop haut."][i18n_lang_idx()])
-            elapsed_time = "00:00",
-            time_left = "00:00",
-            current_im = "0",
-            total_im = "0",
-            processing_speed = "0it/s",
-            percentage = "100",
-            GPU_param = "Unknown",
-            data_type = data_type,
-            break
-
-        # catch smoothening info lines
-        if "<EA>" in line:
-            smooth_output_line = re.search('<EA>(.+)<EA>', line).group().replace('<EA>', '')
-            smooth_output_file = os.path.join(os.path.dirname(json_fpath), "smooth-output.txt")
-            with open(smooth_output_file, 'a+') as f:
-                f.write(f"{smooth_output_line}\n")
-            f.close()
-
-        # if smoothing, the pbar should change description
-        if "<EA-status-change>" in line:
-            status_setting = re.search('<EA-status-change>(.+)<EA-status-change>', line).group().replace('<EA-status-change>', '')
-
-        # get process stats and send them to tkinter
-        if line.startswith("GPU available: False"):
-            GPU_param = "CPU"
-        elif line.startswith("GPU available: True"):
-            GPU_param = "GPU"
-        elif '%' in line[0:4]:
-
-            # read stats
-            times = re.search(r"(\[.*?\])", line)[1]
-            progress_bar = re.search(r"^[^\/]*[^[^ ]*", line.replace(times, ""))[0]
-            percentage = re.search(r"\d*%", progress_bar)[0][:-1]
-            current_im = re.search(r"\d*\/", progress_bar)[0][:-1]
-            total_im = re.search(r"\/\d*", progress_bar)[0][1:]
-            elapsed_time = re.search(r"(?<=\[)(.*)(?=<)", times)[1]
-            time_left = re.search("(?<=<)(.*)(?=,)", times)[1]
-            processing_speed = re.search("(?<=,)(.*)(?=])", times)[1].strip()
-
-            # print stats via event bus
-            event_bus.emit(CLASSIFY_PROGRESS, pct=float(percentage), message=f"Classifying: {current_im}/{total_im}",
-                           process=f"{data_type}_cls", status=status_setting,
-                           cur_it=int(current_im), tot_it=int(total_im),
-                           time_ela=elapsed_time, time_rem=time_left,
-                           speed=processing_speed, hware=GPU_param,
-                           cancel_func=lambda: cancel_deployment(p))
-        root.update()  # process tkinter event loop for GUI responsiveness
-
-    # process is done via event bus
-    event_bus.emit(CLASSIFY_PROGRESS, pct=100.0, message="Classification complete",
-                   process=f"{data_type}_cls", status="done",
-                   time_ela=elapsed_time, speed=processing_speed)
-    # emit finished event
-    event_bus.emit(CLASSIFY_FINISHED, results_path=json_fpath, process=f"{data_type}_cls")
-
-    root.update()  # process tkinter event loop for GUI responsiveness
+    run_classification(
+        config=config,
+        callbacks=_build_gui_callbacks(lambda: state.cancel_deploy_model_pressed),
+        json_fpath=json_fpath,
+        data_type=data_type,
+        cancel_func_factory=_deploy_cancel_factory,
+        simple_mode=simple_mode,
+    )
 
 # quit popen process and update UI state
 def cancel_deployment(process):
@@ -2210,326 +1386,47 @@ def cancel_deployment(process):
     state.progress_window.close()
 
 # deploy model and create json output files
-def deploy_model(path_to_image_folder, selected_options, data_type, simple_mode = False):
-    # log
+def deploy_model(path_to_image_folder, selected_options, data_type, simple_mode=False):
     logger.debug("EXECUTED: %s", sys._getframe().f_code.co_name)
+    from addaxai.orchestration.pipeline import run_detection
+    from addaxai.orchestration.context import DeployConfig
 
-    # emit event
-    event_bus.emit(DEPLOY_STARTED, process=f"{data_type}_det")
+    config = DeployConfig(
+        base_path=AddaxAI_files,
+        det_model_dir=DET_DIR,
+        det_model_name=var_det_model.get(),
+        det_model_path=var_det_model_path.get(),
+        cls_model_name=var_cls_model.get(),
+        disable_gpu=var_disable_GPU.get(),
+        use_abs_paths=var_abs_paths.get(),
+        source_folder=path_to_image_folder,
+        dpd_options_model=state.dpd_options_model,
+        lang_idx=i18n_lang_idx(),
+    )
 
-    # note if user is video analysing without smoothing
-    if (var_cls_model.get() != t('none')) and \
-        (var_smooth_cls_animal.get() == False) and \
-            data_type == 'vid' and \
-                simple_mode == False and \
-                    state.warn_smooth_vid == True:
-                        state.warn_smooth_vid = False
-                        if not mb.askyesno(t('information'), ["You are about to analyze videos without smoothing the confidence scores. "
-                            "Typically, a video may contain many frames of the same animal, increasing the likelihood that at least "
-                            f"one of the labels could be a false prediction. With '{t('lbl_smooth_cls_animal')}' enabled, all"
-                            " predictions from a single video will be averaged, resulting in only one label per video. Do you wish to"
-                            " continue without smoothing?\n\nPress 'No' to go back.", "Estás a punto de analizar videos sin suavizado "
-                            "habilitado. Normalmente, un video puede contener muchos cuadros del mismo animal, lo que aumenta la "
-                            "probabilidad de que al menos una de las etiquetas pueda ser una predicción falsa. Con "
-                            f"'{t('lbl_smooth_cls_animal')}' habilitado, todas las predicciones de un solo video se promediarán,"
-                            " lo que resultará en una sola etiqueta por video. ¿Deseas continuar sin suavizado habilitado?\n\nPresiona "
-                            "'No' para regresar.",
-                            "Vous êtes sur le point d'analyser des vidéos sans lisser les scores de confiance. "
-                            "Typiquement, un vidéo peut contenir plusieurs images d'un même animal, ce qui augmente les chances qu'au moins un "
-                            f"des labels puisse être une fausse prédiction. Avec '{t('lbl_smooth_cls_animal')}' activé, toute"
-                            " les prédictions d'un seul vidéo seront moyennées, résultant en un seul label par vidéo. Souhaitez-vous"
-                            " continuer sans lissage?\n\nAppuyer sur 'Non' pour revenir en arrière."][i18n_lang_idx()]):
-                            return
+    result = run_detection(
+        config=config,
+        callbacks=_build_gui_callbacks(lambda: state.cancel_deploy_model_pressed),
+        data_type=data_type,
+        selected_options=selected_options,
+        simple_mode=simple_mode,
+        cancel_func_factory=_deploy_cancel_factory,
+        error_log_path=state.model_error_log,
+        warning_log_path=state.model_warning_log,
+        current_version=current_AA_version,
+        smooth_cls_animal=var_smooth_cls_animal.get(),
+        warn_smooth_vid=state.warn_smooth_vid,
+    )
 
-    # display loading window — event bus will update UI via event handlers
-    event_bus.emit(DEPLOY_PROGRESS, pct=0.0, message="Loading detection model",
-                   process=f"{data_type}_det", status="load")
-
-    # prepare variables
-    chosen_folder = str(Path(path_to_image_folder))
-    run_detector_batch_py = os.path.join(AddaxAI_files, "cameratraps", "megadetector", "detection", "run_detector_batch.py")
-    image_recognition_file = os.path.join(chosen_folder, "image_recognition_file.json")
-    process_video_py = os.path.join(AddaxAI_files, "cameratraps", "megadetector", "detection", "process_video.py")
-    video_recognition_file = "--output_json_file=" + os.path.join(chosen_folder, "video_recognition_file.json")
-    GPU_param = "Unknown"
-    python_executable = get_python_interpreter(AddaxAI_files,"base")
-
-    # select model based on user input via dropdown menu, or take MDv5a for simple mode
-    custom_model_bool = False
-    if simple_mode:
-        det_model_fpath = os.path.join(DET_DIR, "MegaDetector 5a", "md_v5a.0.0.pt")
-        switch_yolov5_version("old models", AddaxAI_files)
-    elif var_det_model.get() != state.dpd_options_model[i18n_lang_idx()][-1]: # if not chosen the last option, which is "custom model"
-        det_model_fname = load_model_vars("det")["model_fname"]
-        det_model_fpath = os.path.join(DET_DIR, var_det_model.get(), det_model_fname)
-        switch_yolov5_version("old models", AddaxAI_files)
-    else:
-        # set model file
-        det_model_fpath = var_det_model_path.get()
-        custom_model_bool = True
-
-        # set yolov5 git to accommodate new models (checkout depending on how you retrain MD)
-        switch_yolov5_version("new models", AddaxAI_files)
-
-        # extract classes
-        label_map = extract_label_map_from_model(det_model_fpath)
-
-        # write labelmap to separate json
-        json_object = json.dumps(label_map, indent=1)
-        native_model_classes_json_file = os.path.join(chosen_folder, "native_model_classes.json")
-        with open(native_model_classes_json_file, "w") as outfile:
-            outfile.write(json_object)
-
-        # add argument to command call
-        selected_options.append("--class_mapping_filename=" + native_model_classes_json_file)
-
-    # set cancel bool
-    state.cancel_deploy_model_pressed = False
-
-    # if a full image classifier is selected, imitate object detection to get full bboxes
-    full_image_cls = load_model_vars("cls").get("full_image_cls", False)
-    if full_image_cls:
-        imitate_object_detection_for_full_image_classifier(chosen_folder)
-
-    # for crop classifiers we need to run the detection first
-    else:
-
-        # create commands for Windows
-        if os.name == 'nt':
-            if selected_options == []:
-                img_command = [python_executable, run_detector_batch_py, det_model_fpath, '--threshold=0.01', chosen_folder, image_recognition_file]
-                vid_command = [python_executable, process_video_py, '--max_width=1280', '--verbose', '--quality=85', '--allow_empty_video', video_recognition_file, det_model_fpath, chosen_folder]
-            else:
-                img_command = [python_executable, run_detector_batch_py, det_model_fpath, *selected_options, '--threshold=0.01', chosen_folder, image_recognition_file]
-                vid_command = [python_executable, process_video_py, *selected_options, '--max_width=1280', '--verbose', '--quality=85', '--allow_empty_video', video_recognition_file, det_model_fpath, chosen_folder]
-
-        # create command for MacOS and Linux
-        else:
-            if selected_options == []:
-                img_command = [f"'{python_executable}' '{run_detector_batch_py}' '{det_model_fpath}' '--threshold=0.01' '{chosen_folder}' '{image_recognition_file}'"]
-                vid_command = [f"'{python_executable}' '{process_video_py}' '--max_width=1280' '--verbose' '--quality=85' '--allow_empty_video' '{video_recognition_file}' '{det_model_fpath}' '{chosen_folder}'"]
-            else:
-                selected_options = "' '".join(selected_options)
-                img_command = [f"'{python_executable}' '{run_detector_batch_py}' '{det_model_fpath}' '{selected_options}' '--threshold=0.01' '{chosen_folder}' '{image_recognition_file}'"]
-                vid_command = [f"'{python_executable}' '{process_video_py}' '{selected_options}' '--max_width=1280' '--verbose' '--quality=85' '--allow_empty_video' '{video_recognition_file}' '{det_model_fpath}' '{chosen_folder}'"]
-
-        # pick one command
-        if data_type == "img":
-            command = img_command
-        else:
-            command = vid_command
-
-        # if user specified to disable GPU, prepend and set system variable
-        if var_disable_GPU.get() and not simple_mode:
-            if os.name == 'nt': # windows
-                command[:0] = ['set', 'CUDA_VISIBLE_DEVICES=""', '&']
-            elif platform.system() == 'Darwin': # macos
-                mb.showwarning(t('warning'),
-                            ["Disabling GPU processing is currently only supported for CUDA devices on Linux and Windows "
-                                "machines, not on macOS. Proceeding without GPU disabled.", "Deshabilitar el procesamiento de "
-                                "la GPU actualmente sólo es compatible con dispositivos CUDA en máquinas Linux y Windows, no en"
-                                " macOS. Proceder sin GPU desactivada.",
-                                "La désactivation du traitement par GPU est uniquement supportée sur les dispositifs CUDA sous "
-                                "Linux et Windows, pas sous MacOS. Poursuite du traitement sans désactiver le GPU."
-                                ""][i18n_lang_idx()])
-                var_disable_GPU.set(False)
-            else: # linux
-                command = "CUDA_VISIBLE_DEVICES='' " + command
-
-        # log
-        logger.debug("Command: %s", command)
-
-        # prepare process and cancel method per OS
-        if os.name == 'nt':
-            # run windows command
-            p = Popen(command,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    bufsize=1,
-                    shell=True,
-                    universal_newlines=True)
-
-        else:
-            # run unix command
-            p = Popen(command,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    bufsize=1,
-                    shell=True,
-                    universal_newlines=True,
-                    preexec_fn=os.setsid)
-
-        # reset subprocess output
-        state.subprocess_output = ""
-        previous_processed_img = ["There is no previously processed image. The problematic character is in the first image to analyse.",
-                                "No hay ninguna imagen previamente procesada. El personaje problemático está en la primera imagen a analizar.",
-                                "Il n'y a aucune image traitée précédemment. Le caractère problématique est dans la première image à analyser."][i18n_lang_idx()]
-        extracting_frames_mode = False
-
-        # check if the unit shown should be frame or video
-        if data_type == "vid" and var_cls_model.get() == t('none'):
-            frame_video_choice = "video"
-        elif data_type == "vid" and var_cls_model.get() != t('none'):
-            frame_video_choice = "frame"
-        else:
-            frame_video_choice = None
-
-        # read output
-        for line in p.stdout:
-
-            # save output if something goes wrong
-            subprocess_output = subprocess_output + line
-            subprocess_output = subprocess_output[-1000:]
-
-            # log
-            logger.info(line.rstrip())
-
-            # catch model errors
-            if line.startswith("No image files found"):
-                error_msg = t('msg_no_images_found')
-                event_bus.emit(DEPLOY_ERROR, message="No image files found", process=f"{data_type}_det")
-                mb.showerror(error_msg,
-                            [f"There are no images found in '{chosen_folder}'. \n\nAre you sure you specified the correct folder?"
-                            f" If the files are in subdirectories, make sure you don't tick '{t('lbl_exclude_subs')}'.",
-                            f"No se han encontrado imágenes en '{chosen_folder}'. \n\n¿Está seguro de haber especificado la carpeta correcta?"
-                            f" Si los archivos están en subdirectorios, asegúrese de no marcar la casilla '{t('lbl_exclude_subs')}'.",
-                            f"Aucune image trouvée dans '{chosen_folder}'. \n\nAvez-vous spécifié le bon dossier?"
-                            f" Si les fichiers sont dans des sous-dossiers, assurez-vous ne pas avoir coché '{t('lbl_exclude_subs')}'."][i18n_lang_idx()])
-                return
-            if line.startswith("No videos found"):
-                event_bus.emit(DEPLOY_ERROR, message="No videos found", process=f"{data_type}_det")
-                mb.showerror(t('msg_no_videos_found'),
-                            line + [f"\n\nAre you sure you specified the correct folder? If the files are in subdirectories, make sure you don't tick '{t('lbl_exclude_subs')}'.",
-                                    f"\n\n¿Está seguro de haber especificado la carpeta correcta? Si los archivos están en subdirectorios, asegúrese de no marcar la casilla '{t('lbl_exclude_subs')}'.",
-                                    f"\n\nAvez-vous spécifié le bon dossier? Si les fichiers sont dans des sous-dossiers, assurez-vous ne pas avoir coché '{t('lbl_exclude_subs')}'."][i18n_lang_idx()])
-                return
-            if line.startswith("No frames extracted"):
-                event_bus.emit(DEPLOY_ERROR, message="No frames extracted", process=f"{data_type}_det")
-                mb.showerror(t('msg_could_not_extract_frames'),
-                            line + ["\n\nConverting the videos to .mp4 might fix the issue.",
-                                    "\n\nConvertir los vídeos a .mp4 podría solucionar el problema.",
-                                    "\n\nConvertir les vidéos au format .mp4 pourrait régler le problème."][i18n_lang_idx()])
-                return
-            if line.startswith("UnicodeEncodeError:"):
-                event_bus.emit(DEPLOY_ERROR, message="UnicodeEncodeError: Unparsable special character in filename", process=f"{data_type}_det")
-                mb.showerror("Unparsable special character",
-                            [f"{line}\n\nThere seems to be a special character in a filename that cannot be parsed. Unfortunately, it's not"
-                            " possible to point you to the problematic file directly, but I can tell you that the last successfully analysed"
-                            f" image was\n\n{previous_processed_img}\n\nThe problematic character should be in the file or folder name of "
-                            "the next image, alphabetically. Please remove any special characters from the path and try again.",
-                            f"{line}\n\nParece que hay un carácter especial en un nombre de archivo que no se puede analizar. Lamentablemente,"
-                            " no es posible indicarle directamente el archivo problemático, pero puedo decirle que la última imagen analizada "
-                            f"con éxito fue\n\n{previous_processed_img}\n\nEl carácter problemático debe estar en el nombre del archivo o "
-                            "carpeta de la siguiente imagen, alfabéticamente. Elimine los caracteres especiales de la ruta e inténtelo de "
-                            "nuevo.",
-                            f"{line}\n\nIl semble y avoir un caractère spécial non-reconnu dans le nom d'un fichier. Malheureusement, il est"
-                            " impossible d'identifier le fichier directement, cependant la dernière images correctement analysée était "
-                            f" \n\n{previous_processed_img}\n\nLe caractère problématique devrait être dans le nom de fichier ou de dossier de "
-                            "la prochaine image, alphabetiquement. SVP remplacer tout caractère spécial du chemin et du nom de fichier et réessayer."][i18n_lang_idx()])
-                return
-            if line.startswith("Processing image "):
-                previous_processed_img = line.replace("Processing image ", "")
-
-            # write errors to log file
-            if "Exception:" in line:
-                with open(state.model_error_log, 'a+') as f:
-                    f.write(f"{line}\n")
-                f.close()
-
-            # write warnings to log file
-            if "Warning:" in line:
-                if "could not determine MegaDetector version" not in line \
-                    and "no metadata for unknown detector version" not in line \
-                    and "using user-supplied image size" not in line \
-                    and "already exists and will be overwritten" not in line:
-                    with open(state.model_warning_log, 'a+') as f:
-                        f.write(f"{line}\n")
-                    f.close()
-
-            # print frame extraction progress and dont continue until done
-            if "Extracting frames for folder " in line and \
-                data_type == "vid":
-                event_bus.emit(DEPLOY_PROGRESS, pct=0.0, message="Extracting frames...",
-                               process=f"{data_type}_det", status="extracting frames")
-                extracting_frames_mode = True
-            if extracting_frames_mode:
-                if '%' in line[0:4]:
-                    event_bus.emit(DEPLOY_PROGRESS, pct=float(line[:3]), message="Extracting frames...",
-                                   process=f"{data_type}_det", status="extracting frames",
-                                   extracting_frames_txt=[f"Extracting frames... {line[:3]}%",
-                                                          f"Extrayendo fotogramas... {line[:3]}%"])
-            if "Extracted frames for" in line and \
-                data_type == "vid":
-                    extracting_frames_mode = False
-            if extracting_frames_mode:
-                continue
-
-            # get process stats and send them to tkinter
-            if line.startswith("GPU available: False"):
-                GPU_param = "CPU"
-            elif line.startswith("GPU available: True"):
-                GPU_param = "GPU"
-            elif '%' in line[0:4]:
-
-                # read stats
-                times = re.search(r"(\[.*?\])", line)[1]
-                progress_bar = re.search(r"^[^\/]*[^[^ ]*", line.replace(times, ""))[0]
-                percentage = re.search(r"\d*%", progress_bar)[0][:-1]
-                current_im = re.search(r"\d*\/", progress_bar)[0][:-1]
-                total_im = re.search(r"\/\d*", progress_bar)[0][1:]
-                elapsed_time = re.search(r"(?<=\[)(.*)(?=<)", times)[1]
-                time_left = re.search("(?<=<)(.*)(?=,)", times)[1]
-                processing_speed = re.search("(?<=,)(.*)(?=])", times)[1].strip()
-
-                # show progress via event bus
-                event_bus.emit(DEPLOY_PROGRESS, pct=float(percentage), message=f"Processing: {current_im}/{total_im}",
-                               process=f"{data_type}_det", status="running",
-                               cur_it=int(current_im), tot_it=int(total_im),
-                               time_ela=elapsed_time, time_rem=time_left,
-                               speed=processing_speed, hware=GPU_param,
-                               cancel_func=lambda: cancel_deployment(p),
-                               frame_video_choice=frame_video_choice)
-            root.update()  # process tkinter event loop for GUI responsiveness
-
-        # process is done
-        root.update()  # process tkinter event loop for GUI responsiveness
-        event_bus.emit(DEPLOY_PROGRESS, pct=100.0, message="Detection complete",
-                       process=f"{data_type}_det", status="done")
-
-    # create addaxai metadata
-    addaxai_metadata = {"addaxai_metadata" : {"version" : current_AA_version,
-                                                  "custom_model" : custom_model_bool,
-                                                  "custom_model_info" : {}}}
-    if custom_model_bool:
-        addaxai_metadata["addaxai_metadata"]["custom_model_info"] = {"model_name" : os.path.basename(os.path.normpath(det_model_fpath)),
-                                                                         "label_map" : label_map}
-
-    # write metadata to json and make absolute if specified
-    image_recognition_file = os.path.join(chosen_folder, "image_recognition_file.json")
-    video_recognition_file = os.path.join(chosen_folder, "video_recognition_file.json")
-    if data_type == "img" and os.path.isfile(image_recognition_file):
-        append_to_json(image_recognition_file, addaxai_metadata)
-        if var_abs_paths.get():
-            make_json_absolute(image_recognition_file, var_choose_folder.get())
-    if data_type == "vid" and os.path.isfile(video_recognition_file):
-        append_to_json(video_recognition_file, addaxai_metadata)
-        if var_abs_paths.get():
-            make_json_absolute(video_recognition_file, var_choose_folder.get())
-
-    # classify detections if specified by user
-    if not state.cancel_deploy_model_pressed:
-        # emit finished event
-        results_path = os.path.join(chosen_folder, "image_recognition_file.json") if data_type == "img" else os.path.join(chosen_folder, "video_recognition_file.json")
-        event_bus.emit(DEPLOY_FINISHED, results_path=results_path, process=f"{data_type}_det")
-
-        if var_cls_model.get() != t('none'):
-            if data_type == "img":
-                classify_detections(os.path.join(chosen_folder, "image_recognition_file.json"), data_type, simple_mode = simple_mode)
-            else:
-                classify_detections(os.path.join(chosen_folder, "video_recognition_file.json"), data_type, simple_mode = simple_mode)
-    else:
-        # emit cancelled event
-        event_bus.emit(DEPLOY_CANCELLED, process=f"{data_type}_det")
+    # preserve existing behavior: classify after successful detection
+    if result.success and var_cls_model.get() != t('none'):
+        chosen_folder = str(Path(path_to_image_folder))
+        json_fpath = result.json_path or (
+            os.path.join(chosen_folder, "image_recognition_file.json")
+            if data_type == "img"
+            else os.path.join(chosen_folder, "video_recognition_file.json")
+        )
+        classify_detections(json_fpath, data_type, simple_mode=simple_mode)
 
 
 
@@ -3120,70 +2017,57 @@ def start_deploy(simple_mode = False):
                                                 options = options,
                                                 video_filename_to_frame_rate = frame_rates)
 
+                # shared kwargs for _postprocess_inner in simple mode
+                from addaxai.orchestration.pipeline import _postprocess_inner
+                _simple_pp_kwargs = dict(
+                    cancel_check=lambda: state.cancel_var,
+                    update_ui=root.update,
+                    cancel_func=cancel,
+                    produce_plots_func=produce_plots,
+                    on_confirm=mb.askyesno,
+                    on_error=mb.showerror,
+                    current_version=current_AA_version,
+                    lang_idx=i18n_lang_idx(),
+                    base_path=AddaxAI_files,
+                    cls_model_name=var_cls_model.get(),
+                )
+
                 # if only analysing images, postprocess images with plots
                 if "img_pst" in processes and "vid_pst" not in processes:
-                    postprocess(src_dir = chosen_folder,
-                                dst_dir = chosen_folder,
-                                thresh = global_vars["var_thresh_default"],
-                                sep = False,
-                                keep_series = False,
-                                keep_series_seconds = 0,
-                                file_placement = 1,
-                                sep_conf = False,
-                                vis = False,
-                                crp = False,
-                                exp = True,
-                                plt = True,
-                                exp_format = "XLSX",
-                                data_type = "img")
+                    _postprocess_inner(
+                        src_dir=chosen_folder, dst_dir=chosen_folder,
+                        thresh=global_vars["var_thresh_default"],
+                        sep=False, keep_series=False, keep_series_seconds=0,
+                        file_placement=1, sep_conf=False, vis=False, crp=False,
+                        exp=True, plt=True, exp_format="XLSX", data_type="img",
+                        **_simple_pp_kwargs)
 
                 # if only analysing videos, postprocess videos with plots
                 elif "vid_pst" in processes and "img_pst" not in processes:
-                    postprocess(src_dir = chosen_folder,
-                                dst_dir = chosen_folder,
-                                thresh = global_vars["var_thresh_default"],
-                                sep = False,
-                                keep_series = False,
-                                keep_series_seconds = 0,
-                                file_placement = 1,
-                                sep_conf = False,
-                                vis = False,
-                                crp = False,
-                                exp = True,
-                                plt = True,
-                                exp_format = "XLSX",
-                                data_type = "vid")
+                    _postprocess_inner(
+                        src_dir=chosen_folder, dst_dir=chosen_folder,
+                        thresh=global_vars["var_thresh_default"],
+                        sep=False, keep_series=False, keep_series_seconds=0,
+                        file_placement=1, sep_conf=False, vis=False, crp=False,
+                        exp=True, plt=True, exp_format="XLSX", data_type="vid",
+                        **_simple_pp_kwargs)
 
                 # otherwise postprocess first images without plots, and then videos with plots
                 else:
-                    postprocess(src_dir = chosen_folder,
-                                dst_dir = chosen_folder,
-                                thresh = global_vars["var_thresh_default"],
-                                sep = False,
-                                keep_series = False,
-                                keep_series_seconds = 0,
-                                file_placement = 1,
-                                sep_conf = False,
-                                vis = False,
-                                crp = False,
-                                exp = True,
-                                plt = False,
-                                exp_format = "XLSX",
-                                data_type = "img")
-                    postprocess(src_dir = chosen_folder,
-                                dst_dir = chosen_folder,
-                                thresh = global_vars["var_thresh_default"],
-                                sep = False,
-                                keep_series = False,
-                                keep_series_seconds = 0,
-                                file_placement = 1,
-                                sep_conf = False,
-                                vis = False,
-                                crp = False,
-                                exp = True,
-                                plt = True,
-                                exp_format = "XLSX",
-                                data_type = "vid")
+                    _postprocess_inner(
+                        src_dir=chosen_folder, dst_dir=chosen_folder,
+                        thresh=global_vars["var_thresh_default"],
+                        sep=False, keep_series=False, keep_series_seconds=0,
+                        file_placement=1, sep_conf=False, vis=False, crp=False,
+                        exp=True, plt=False, exp_format="XLSX", data_type="img",
+                        **_simple_pp_kwargs)
+                    _postprocess_inner(
+                        src_dir=chosen_folder, dst_dir=chosen_folder,
+                        thresh=global_vars["var_thresh_default"],
+                        sep=False, keep_series=False, keep_series_seconds=0,
+                        file_placement=1, sep_conf=False, vis=False, crp=False,
+                        exp=True, plt=True, exp_format="XLSX", data_type="vid",
+                        **_simple_pp_kwargs)
 
         # let's organise all the json files and check their presence
         image_recognition_file = os.path.join(chosen_folder, "image_recognition_file.json")

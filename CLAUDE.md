@@ -15,7 +15,7 @@ and ML frameworks — so each model runs as a subprocess, often in an isolated c
 
 ---
 
-## Refactoring History (Phases 1–7a)
+## Refactoring History (Phases 1–7b)
 
 The application originally lived in a single ~11,200-line file (`AddaxAI_GUI.py`) with no
 separation between business logic, UI, model deployment, data processing, and localization.
@@ -47,26 +47,36 @@ with dual-write wiring. Added view protocols (`addaxai/ui/protocols.py`) and she
 modules. Renamed `AddaxAI_GUI.py` → `addaxai/app.py`. Added read-only REST API
 (`addaxai/api/server.py`).
 
-**Phase 7a (Track A complete):** Completed the event bus migration. Wired deploy_tab,
-postprocess_tab, and hitl_window event handlers to ProgressWindow. Removed all direct
-`progress_window.update_values()` calls from the three orchestrators (`deploy_model()`,
-`classify_detections()`, `start_postprocess()`/`postprocess()`). Orchestrators now
-communicate progress exclusively through `event_bus.emit()`. Extracted widget construction
-code into `DeployTab.build_widgets()`, `PostprocessTab.build_widgets()`, and
-`HITLWindow.build_widgets()`. Added 43 event wiring tests (`test_orchestrator_events.py`,
-`test_ui_event_wiring.py`). Net result: ~645 lines of widget code moved from app.py to
-UI modules; app.py reduced from 8,624 to 8,273 lines.
+**Phase 7a:** Completed the event bus migration. Wired deploy_tab, postprocess_tab, and
+hitl_window event handlers to ProgressWindow. Removed all direct `progress_window.update_values()`
+calls from the three orchestrators. Orchestrators now communicate progress exclusively
+through `event_bus.emit()`. Extracted widget construction into `build_widgets()` methods.
+Added 43 event wiring tests. Net result: ~645 lines of widget code moved out of app.py.
+
+**Phase 7b:** Created `addaxai/orchestration/` package — a complete, headless-capable,
+tkinter-free re-implementation of all three orchestrators:
+- `context.py` — `DeployConfig`, `ClassifyConfig`, `PostprocessConfig` dataclasses
+- `callbacks.py` — `OrchestratorCallbacks` dataclass (replaces all mb.* and root.update calls)
+- `stdout_parser.py` — `parse_detection_stdout()`, `parse_classification_stdout()`
+- `pipeline.py` — `run_detection()`, `run_classification()`, `run_postprocess()`,
+  `_postprocess_inner()`, plus result dataclasses
+
+**Critical gap:** Phase 7b built the orchestration module as a parallel implementation but
+did NOT wire `app.py` to call it. The original `deploy_model()`, `classify_detections()`,
+`postprocess()`, and `start_postprocess()` in `app.py` are unchanged and still run the
+app. The new pipeline functions are currently dead code from the app's perspective.
+Phase 7c (below) does the wiring.
 
 ---
 
-## Current State (as of 2026-03-24)
+## Current State (as of 2026-03-25)
 
 ### Numbers
 
-- **53 Python modules** under `addaxai/` (13,928 lines total)
-- **`addaxai/app.py`**: 8,273 lines — still the monolith
-- **38 test files** under `tests/` (5,983 lines)
-- **471 tests** (462 passing, ~10 skipped for optional deps)
+- **58 Python modules** under `addaxai/` (16,112 lines total)
+- **`addaxai/app.py`**: 7,656 lines — still contains the 4 original orchestrator functions
+- **`addaxai/orchestration/`**: 2,076 lines — new headless orchestrators (not yet wired)
+- **42 test files** under `tests/` (615 tests collected, ~462 passing, ~10 skipped)
 - **3 CI jobs**: unit tests (Python 3.9 + 3.11 with coverage), ruff lint, mypy typecheck
 
 ### What's Done
@@ -77,18 +87,21 @@ UI modules; app.py reduced from 8,624 to 8,273 lines.
 - Full type annotations (Python 3.8 compatible)
 - Logging throughout (replaces all print() calls)
 - Event bus: orchestrators emit events, UI modules subscribe and forward to ProgressWindow
-- Widget construction extracted to `build_widgets()` methods in deploy_tab, postprocess_tab,
-  hitl_window
+- Widget construction extracted to `build_widgets()` methods
 - View protocols: `DeployView`, `PostprocessView`, `HITLView`, `ResultsView`
 - JSON schemas, REST API (read-only), `InferenceBackend` protocol
+- `addaxai/orchestration/` package — complete, tested, headless-capable pipeline functions
 
-### What's NOT Done
+### What's NOT Done (Phase 7c target)
 
-The orchestrator functions (`deploy_model()`, `classify_detections()`, `postprocess()`,
-`start_postprocess()`) still live in `app.py` and directly reference tkinter variables,
-messageboxes, and `root.update()`. They cannot be imported or tested without importing the
-entire GUI. This blocks headless deployment, cloud inference, REST API write endpoints, and
-proper orchestrator-level testing. Phase 7b addresses this — see below.
+The 4 orchestrator functions in `app.py` still run the app directly, with tkinter variable
+reads, messageboxes, and `root.update()` embedded in their bodies:
+- `postprocess()` — 972 lines, called by `start_postprocess()` and `start_deploy()`
+- `start_postprocess()` — 146 lines
+- `classify_detections()` — 198 lines, called by `deploy_model()`
+- `deploy_model()` — 324 lines
+
+Total to remove: ~1,640 lines. After Phase 7c, these become thin shims (~25 lines each).
 
 ---
 
@@ -96,7 +109,7 @@ proper orchestrator-level testing. Phase 7b addresses this — see below.
 
 ```
 addaxai/
-├── app.py                  # 8,273 lines — GUI layout + orchestrators (being extracted)
+├── app.py                  # 7,656 lines — GUI shell + 4 orchestrator bodies (being wired)
 ├── __init__.py
 ├── py.typed                # PEP 561 marker
 ├── core/
@@ -111,15 +124,21 @@ addaxai/
 │   ├── backend.py          # InferenceBackend protocol (runtime_checkable)
 │   ├── deploy.py           # cancel_subprocess, switch_yolov5_version, imitate_object_detection
 │   └── registry.py         # fetch_known_models, set_up_unknown_model, environment_needs_downloading
+├── orchestration/          # Phase 7b — headless orchestrators (not yet wired to app.py)
+│   ├── __init__.py
+│   ├── context.py          # DeployConfig, ClassifyConfig, PostprocessConfig dataclasses
+│   ├── callbacks.py        # OrchestratorCallbacks dataclass
+│   ├── stdout_parser.py    # parse_detection_stdout, parse_classification_stdout
+│   └── pipeline.py         # run_detection, run_classification, run_postprocess, _postprocess_inner
 ├── processing/
 │   ├── annotations.py      # Pascal VOC / COCO / YOLO XML conversion
 │   ├── export.py           # csv_to_coco
 │   └── postprocess.py      # move_files, format_size
 ├── analysis/
-│   └── plots.py            # fig2img, overlay_logo, calculate_time_span
+│   └── plots.py            # fig2img, overlay_logo, calculate_time_span, _produce_plots_extracted
 ├── i18n/
 │   ├── __init__.py         # t("key"), lang_idx(), i18n_set_language()
-│   ├── en.json, es.json, fr.json
+│   └── en.json, es.json, fr.json
 ├── hitl/
 │   └── __init__.py         # Stub — HITL data logic remains in app.py
 ├── ui/
@@ -134,11 +153,11 @@ addaxai/
 │   └── simple/             # simple_window.py (build_simple_mode)
 ├── schemas/
 │   ├── validate.py         # Manual validation (no jsonschema dependency)
-│   ├── global_vars.schema.json, model_vars.schema.json, recognition_output.schema.json
+│   └── global_vars.schema.json, model_vars.schema.json, recognition_output.schema.json
 ├── api/
 │   └── server.py           # FastAPI: GET /models, /results/{folder}, /health
 └── utils/
-    ├── files.py, images.py, json_ops.py
+    └── files.py, images.py, json_ops.py
 ```
 
 ---
@@ -233,7 +252,7 @@ Tests are split by runtime because the GUI requires a specific conda env not ava
 
 **Unit tests** (`tests/test_*.py`, excluding GUI tests): Run with `.venv` Python 3.9+.
 Fast (~30s). Import `addaxai/` modules directly. No tkinter, no conda, no models.
-Current count: 462 passing, ~10 skipped (optional deps: cv2, matplotlib, customtkinter).
+Current count: ~462 passing, ~10 skipped (optional deps: cv2, matplotlib, customtkinter).
 
 **GUI integration tests** (`tests/test_gui_integration.py`): Run with env-base Python 3.8.
 The `tests/gui_test_runner.py` harness `exec()`s `addaxai/app.py` with a patched
@@ -300,425 +319,359 @@ The Windows file-in-use bug is the only production blocker.
 
 ---
 
-## Phase 7b — Orchestrator Decoupling
+## Phase 7c — Wire app.py to the Extracted Orchestrators
 
 ### Goal
 
-Extract the orchestrator functions from `app.py` so that detection, classification, and
-postprocessing can run without any GUI dependency. After this phase, `app.py` should be a
-thin GUI shell that reads tkinter variables, calls GUI-free orchestrator functions, and
-handles the results. Target: reduce `app.py` from 8,273 lines to ~4,500 lines.
+Replace the bodies of the 4 original orchestrator functions in `app.py` with thin shims
+that call the pipeline functions from `addaxai/orchestration/pipeline.py`, then delete the
+dead implementations. Target: reduce `app.py` from 7,656 to ~6,100 lines by removing
+~1,640 lines of implementation that now live in `pipeline.py`.
 
-### Why This Matters
+### Why This Is Needed
 
-Four stated future goals depend on GUI-free orchestrators:
-1. **Cloud inference backend** — needs to call `run_detection()` from a server process
-2. **REST API write endpoints** — `POST /detect` needs headless detection
-3. **UI framework migration** — PySide6 swap is only contained if orchestrators don't
-   import tkinter
-4. **Orchestrator-level testing** — currently impossible because importing the orchestrators
-   imports all of `app.py`
+Phase 7b built `addaxai/orchestration/pipeline.py` as a parallel implementation. The four
+original functions (`deploy_model`, `classify_detections`, `postprocess`,
+`start_postprocess`) in `app.py` are unchanged and still run the app. The new pipeline
+functions are dead code until this wiring phase is complete.
 
-### Architecture Overview
+### Architecture After Phase 7c
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  app.py  (GUI shell)                                │
-│  - Reads tkinter vars → builds config dataclass     │
-│  - Creates callbacks struct (messageboxes, etc.)    │
-│  - Calls orchestrator function                      │
-│  - Handles result (shows messagebox, updates frame) │
-└──────────────┬──────────────────────────────────────┘
-               │ plain data + callbacks
-               ▼
-┌─────────────────────────────────────────────────────┐
-│  addaxai/orchestration/                             │
-│  pipeline.py  — run_detection, run_classification,  │
-│                 run_postprocess                      │
-│  context.py   — DeployConfig, ClassifyConfig,       │
-│                 PostprocessConfig (dataclasses)      │
-│  callbacks.py — DeployCallbacks, ClassifyCallbacks,  │
-│                 PostprocessCallbacks (dataclasses)   │
-│  stdout_parser.py — parse_detection_stdout,         │
-│                     parse_classification_stdout      │
-└──────────────┬──────────────────────────────────────┘
-               │ event_bus.emit()
-               ▼
-┌─────────────────────────────────────────────────────┐
-│  addaxai/core/events.py  (framework-agnostic)       │
-│  UI modules subscribe → forward to ProgressWindow   │
-└─────────────────────────────────────────────────────┘
+app.py (GUI shell)
+  start_postprocess() — 40 lines: read tkinter vars → PostprocessConfig + callbacks → call run_postprocess()
+  deploy_model()      — 30 lines: read tkinter vars → DeployConfig + callbacks → call run_detection()
+  classify_detections()— 30 lines: read tkinter vars → ClassifyConfig + callbacks → call run_classification()
+  [postprocess() — DELETED, was 972 lines]
+
+addaxai/orchestration/pipeline.py (no tkinter dependency)
+  run_detection()       — builds subprocess, parses stdout, returns DetectionResult
+  run_classification()  — builds subprocess, parses stdout, returns ClassificationResult
+  run_postprocess()     — validates, calls _postprocess_inner for img/vid, returns PostprocessResult
+  _postprocess_inner()  — 680-line body, all GUI replaced by injected callbacks
 ```
 
-### Dependency Audit Summary
+### Critical Rules
 
-The four orchestrator functions in `app.py` have these GUI dependencies that must be
-replaced with injected callbacks or config parameters:
+- **Read before writing.** Before replacing any function body, read the EXACT current code
+  of both the app.py function and the pipeline.py equivalent in their current form. Line
+  numbers shift as you edit — do not rely on cached line numbers.
+- **Pure mechanical wiring.** Do not change behavior, rename variables, or improve code.
+  The shim's job is to translate module-level tkinter state into plain-data arguments.
+- **One commit per step.** Run `make test` and `make lint` after each commit.
+- **Verify with grep.** After replacing each function body, grep for any remaining callers
+  of the old function to confirm all call sites are accounted for.
+- **No new tests needed.** The pipeline functions already have full test coverage. The
+  validation for Phase 7c is `make test` (existing tests must still pass) plus manual
+  smoke test via `make dev`.
 
-| Dependency type | deploy_model | classify_detections | postprocess | start_postprocess |
-|---|---|---|---|---|
-| `mb.showerror()` | 4 calls | 0 | 1 | 3 |
-| `mb.askyesno()` | 1 | 0 | 1 | 2 |
-| `mb.showinfo()` | 0 | 1 | 0 | 0 |
-| `mb.showwarning()` | 1 | 0 | 0 | 1 |
-| `root.update()` | 2 | 3 | 4 | 0 |
-| tkinter var `.get()` | 6 vars | 6 vars | 3 vars | 12 vars |
-| `state.*` fields | 6 fields | 3 fields | 5 fields | 4 fields |
-| Other app.py funcs | 4 | 3 | 4 | 3 |
+### Step C1: Wire `start_postprocess()` → `run_postprocess()`
 
-### Critical Rules (carried forward from Phase 7a)
+**What to do:** Replace the 146-line body of `start_postprocess()` in `app.py` with a
+~40-line shim.
 
-- **Read before writing.** Before modifying any file, read the exact code you are about
-  to change in its current form. Do not rely on line numbers from this document — they
-  shift as you edit.
-- **Pure mechanical moves.** Do not change behavior, rename variables, add abstractions,
-  or "improve" code as you move it. Copy-paste, then change only the minimum needed.
-- **One commit per extraction.** Run `make test` and `make lint` after each commit.
-- **Verify with grep.** After each extraction, grep `app.py` to confirm the moved code
-  is gone and grep the destination file to confirm it arrived.
-- **Forward data transparently.** Do not reinterpret, reconstruct, or lossy-compress
-  parameters. If the original code passes 10 kwargs, the extracted version passes 10 kwargs.
+**Read first:** Read `start_postprocess()` in app.py (search for `def start_postprocess`)
+and `run_postprocess()` in `pipeline.py` (search for `def run_postprocess`). Understand
+every caller and every module-level variable the old function reads.
 
-### Step B1: Extract leaf helper functions
+**Call sites for `postprocess()`** (the inner function called by `start_postprocess()`):
+- `start_postprocess()` at 2 locations — these disappear when the shim calls `run_postprocess()` instead
+- `start_deploy()` at 4 locations (simple-mode auto-postprocess) — these remain until Step C2
 
-**What to do:** Move helper functions that orchestrators depend on but that have no GUI
-dependencies themselves. These are pure functions or simple file-system operations that
-should have been extracted in Phase 1 but weren't.
-
-**Functions to move (verify each has no GUI dependency before moving):**
-
-| Function | Current location | Destination | Notes |
-|---|---|---|---|
-| `extract_label_map_from_model()` | app.py ~line 4984 | `addaxai/models/deploy.py` | Has one `mb.showerror` — replace with raising an exception; let caller show the error |
-| `taxon_mapping_csv_present()` | app.py ~line 2590 | `addaxai/models/registry.py` | 2-line function. Parameterize: accept `base_path` and `cls_model_name` instead of reading `AddaxAI_files` and `var_cls_model.get()` |
-| `load_model_vars()` wrapper | app.py ~line 5415 | stays in app.py | This is thin GUI glue calling `load_model_vars_for()`. But orchestrators should call `load_model_vars_for()` directly with the model dir as a string parameter |
-
-**For `extract_label_map_from_model()`:** Read the function. It loads a model checkpoint
-to read class names. The one `mb.showerror()` call should become a logged error + raised
-exception. The calling code in `deploy_model()` already has error handling around it.
-
-**Detailed instructions:**
-
-1. Read each function in its entirety before moving it.
-2. Parameterize: replace `AddaxAI_files` with `base_path`, `var_cls_model.get()` with
-   `cls_model_name`, etc.
-3. Add type annotations.
-4. Update all call sites in app.py to pass the required arguments.
-5. Run `make test` after each function move.
-
-**Commit:** `refactor: extract leaf helper functions from app.py (extract_label_map, taxon_mapping_csv_present)`
-
-### Step B2: Extract `produce_plots()` into `addaxai/analysis/plots.py`
-
-**What to do:** Move `produce_plots()` (~600 lines, app.py lines ~1365-1962) into
-`addaxai/analysis/plots.py`, which already has plotting helpers (`fig2img`,
-`overlay_logo`, `calculate_time_span`).
-
-**Why separate step:** This is the single largest self-contained function in app.py. It
-is called only from `postprocess()`. Its GUI dependencies are limited to `root.update()`
-calls embedded in loops (for UI responsiveness) and event bus emits.
-
-**GUI dependencies to remove:**
-- `root.update()` calls (~4) → replace with `update_ui: Callable[[], None]` parameter
-- `cancel` function reference → replace with `cancel_check: Callable[[], bool]` parameter
-- `event_bus.emit(POSTPROCESS_PROGRESS, ...)` calls → keep as-is (event bus is
-  framework-agnostic)
-- References to `state.postprocessing_error_log` → pass as parameter
-- References to `var_choose_folder.get()` → pass `source_folder` as parameter
-- References to `i18n_lang_idx()` and `t()` → pass as parameters
-
-**Detailed instructions:**
-
-1. Read `produce_plots()` in its entirety. Note every reference to module-level variables.
-2. Create the function signature with all needed parameters (there will be many — this
-   function does a lot). Do NOT try to reduce the parameter count by creating a config
-   object yet — just make it work.
-3. Move the function body verbatim. Change only module-level references → parameters.
-4. In `app.py`, replace the function body with a call to the extracted version, passing
-   all arguments from the module scope.
-5. Run `make test` and `make lint`.
-
-**Commit:** `refactor: extract produce_plots() into addaxai/analysis/plots.py`
-
-### Step B3: Create config dataclasses
-
-**What to do:** Create `addaxai/orchestration/context.py` with plain dataclasses that
-replace tkinter variable reads. These are the "shape" of the data each orchestrator needs.
-
-**File to create:** `addaxai/orchestration/__init__.py` and `addaxai/orchestration/context.py`
-
-**Dataclasses to define:**
+**Shim structure:**
 
 ```python
-@dataclass
-class DeployConfig:
-    """All settings needed to run detection, with no GUI dependencies."""
-    base_path: str                    # AddaxAI_files directory
-    det_model_dir: str                # path to detection models
-    det_model_name: str               # selected detection model name
-    det_model_path: str               # path for custom models (empty if not custom)
-    cls_model_name: str               # "None" if no classification
-    disable_gpu: bool
-    use_abs_paths: bool
-    source_folder: str                # the folder being processed
-    dpd_options_model: List[List[str]]  # model dropdown options (per language)
-    lang_idx: int                     # current language index (0=en, 1=es, 2=fr)
+def start_postprocess():
+    logger.debug("EXECUTED: %s", sys._getframe().f_code.co_name)
+    from addaxai.orchestration.pipeline import run_postprocess
+    from addaxai.orchestration.context import PostprocessConfig
+    from addaxai.orchestration.callbacks import OrchestratorCallbacks
 
-@dataclass
-class ClassifyConfig:
-    """All settings needed to run classification."""
-    base_path: str
-    cls_model_name: str
-    disable_gpu: bool
-    cls_detec_thresh: float
-    cls_class_thresh: float
-    smooth_cls_animal: bool
-    tax_fallback: bool
-    temp_frame_folder: str
-    lang_idx: int
+    # save settings for next time (stays in app.py — pure GUI/config concern)
+    write_global_vars(AddaxAI_files, { ... all the same keys as before ... })
 
-@dataclass
-class PostprocessConfig:
-    """All settings needed to run postprocessing."""
-    source_folder: str
-    dest_folder: str
-    thresh: float
-    separate_files: bool
-    file_placement: int               # 1=move, 2=copy
-    sep_conf: bool
-    vis: bool
-    crp: bool
-    exp: bool
-    plt: bool
-    exp_format: str
-    data_type: str                    # "img" or "vid"
-    vis_blur: bool
-    vis_bbox: bool
-    vis_size_idx: int
-    keep_series: bool
-    keep_series_seconds: float
-    keep_series_species: List[str]
-    current_version: str
-    lang_idx: int
+    # read vars needed for ProgressWindow sizing before calling run_postprocess
+    src_dir = var_choose_folder.get()
+    img_json = os.path.isfile(os.path.join(src_dir, "image_recognition_file.json"))
+    vid_json = os.path.isfile(os.path.join(src_dir, "video_recognition_file.json"))
+
+    # build config — every field maps 1:1 to a tkinter var read
+    config = PostprocessConfig(
+        source_folder=src_dir,
+        dest_folder=var_output_dir.get(),
+        thresh=var_thresh.get(),
+        separate_files=var_separate_files.get(),
+        file_placement=var_file_placement.get(),
+        sep_conf=var_sep_conf.get(),
+        vis=var_vis_files.get(),
+        crp=var_crp_files.get(),
+        exp=var_exp.get(),
+        plt=var_plt.get(),
+        exp_format=var_exp_format.get(),
+        data_type="img",            # run_postprocess handles both img and vid internally
+        vis_blur=var_vis_blur.get(),
+        vis_bbox=var_vis_bbox.get(),
+        vis_size_idx=t('dpd_vis_size').index(var_vis_size.get()),
+        keep_series=var_keep_series.get(),
+        keep_series_seconds=var_keep_series_seconds.get(),
+        keep_series_species=global_vars.get('var_keep_series_species', []),
+        current_version=current_AA_version,
+        lang_idx=i18n_lang_idx(),
+    )
+
+    callbacks = OrchestratorCallbacks(
+        on_error=mb.showerror,
+        on_warning=mb.showwarning,
+        on_info=mb.showinfo,
+        on_confirm=mb.askyesno,
+        update_ui=root.update,
+        cancel_check=lambda: state.cancel_var,
+    )
+
+    # open ProgressWindow only if JSON files exist (run_postprocess will handle the
+    # no-JSON error case via callbacks.on_error without needing a window)
+    if img_json or vid_json:
+        processes = []
+        if img_json: processes.append("img_pst")
+        if config.plt: processes.append("plt")
+        if vid_json: processes.append("vid_pst")
+        state.progress_window = ProgressWindow(
+            processes=processes, master=root,
+            scale_factor=scale_factor, padx=PADX, pady=PADY, green_primary=green_primary)
+        state.progress_window.open()
+
+    state.cancel_var = False
+
+    def _cancel():
+        state.cancel_var = True
+
+    result = run_postprocess(
+        config=config,
+        callbacks=callbacks,
+        cancel_func=_cancel,
+        produce_plots_func=produce_plots,
+        base_path=AddaxAI_files,
+        cls_model_name=var_cls_model.get(),
+    )
+
+    if result.success:
+        complete_frame(fth_step)
+    if img_json or vid_json:
+        state.progress_window.close()
 ```
 
-**Important:** These dataclasses should only hold plain Python values (str, bool, float,
-int, List). No tkinter vars, no widget references, no callables. Callables go in the
-callbacks dataclass (Step B4).
+**After replacing the body:** Verify `postprocess()` is still called from `start_deploy()`.
+Do NOT delete `postprocess()` yet — that happens in Step C2.
 
-**Tests:** Write tests in `tests/test_orchestration_context.py` that verify dataclass
-instantiation, default values, and that none of the fields are tkinter types.
+**Commit:** `refactor: wire start_postprocess() to call run_postprocess() (Step C1)`
 
-**Commit:** `feat: add orchestration config dataclasses (DeployConfig, ClassifyConfig, PostprocessConfig)`
+### Step C2: Update `start_deploy()` simple-mode calls, then delete `postprocess()`
 
-### Step B4: Create callback dataclasses
+**What to do:** After C1, `postprocess()` is only called from `start_deploy()` in simple
+mode (4 call sites, around lines 3125-3184). Replace each call with a direct call to
+`_postprocess_inner()` from `pipeline.py`. Then delete the `postprocess()` function
+entirely (removes 972 lines).
 
-**What to do:** Create `addaxai/orchestration/callbacks.py` with dataclasses that hold
-the injected callback functions. These replace all direct GUI calls (messageboxes,
-root.update, cancel functions).
+**Read first:** Read each of the 4 `postprocess()` call sites in `start_deploy()` to
+understand the exact arguments passed. Read `_postprocess_inner()` in `pipeline.py` to
+understand the added parameters.
 
-**File to create:** `addaxai/orchestration/callbacks.py`
+**What the simple-mode calls need:** The existing calls already pass all positional
+arguments. The `_postprocess_inner()` requires additional keyword arguments that the old
+`postprocess()` was reading from module scope:
+- `vis_blur=var_vis_blur.get()`
+- `vis_bbox=var_vis_bbox.get()`
+- `vis_size_idx=t('dpd_vis_size').index(var_vis_size.get())`
+- `cancel_check=lambda: state.cancel_var`
+- `update_ui=root.update`
+- `cancel_func=cancel` (or whatever the cancel callable is in that context — read the code)
+- `produce_plots_func=produce_plots`
+- `on_confirm=mb.askyesno`
+- `on_error=mb.showerror`
+- `current_version=current_AA_version`
+- `lang_idx=i18n_lang_idx()`
+- `base_path=AddaxAI_files`
+- `cls_model_name=var_cls_model.get()`
+
+**Note:** In simple mode, `keep_series_species` is hardcoded as `[]` in the existing
+calls — pass it through as-is.
+
+**After updating all 4 call sites:** Grep app.py for `postprocess(` to confirm no remaining
+callers. Then delete the `postprocess()` function (lines ~250–1221).
+
+**Commit:** `refactor: replace postprocess() call sites in start_deploy(), delete postprocess() (Step C2)`
+
+### Step C3: Wire `classify_detections()` → `run_classification()`
+
+**What to do:** Replace the 198-line body of `classify_detections()` with a ~30-line shim.
+
+**Read first:** Read `classify_detections()` in app.py and `run_classification()` in
+`pipeline.py`. Note that `classify_detections()` is called only from within `deploy_model()`
+(2 call sites). Its signature is `(json_fpath, data_type, simple_mode=False)`.
+
+**Shim structure:**
 
 ```python
-@dataclass
-class OrchestratorCallbacks:
-    """Injected callbacks for GUI interaction during orchestration.
+def classify_detections(json_fpath, data_type, simple_mode=False):
+    logger.debug("EXECUTED: %s", sys._getframe().f_code.co_name)
+    from addaxai.orchestration.pipeline import run_classification
+    from addaxai.orchestration.context import ClassifyConfig
+    from addaxai.orchestration.callbacks import OrchestratorCallbacks
 
-    In GUI mode: these call mb.showerror(), root.update(), etc.
-    In headless mode: these log errors, no-op for UI updates, etc.
-    """
-    on_error: Callable[[str, str], None]          # (title, message) → show error
-    on_warning: Callable[[str, str], None]         # (title, message) → show warning
-    on_info: Callable[[str, str], None]            # (title, message) → show info
-    on_confirm: Callable[[str, str], bool]         # (title, message) → ask yes/no
-    update_ui: Callable[[], None]                  # pump event loop (no-op headless)
-    cancel_check: Callable[[], bool]               # check if user requested cancel
+    config = ClassifyConfig(
+        base_path=AddaxAI_files,
+        cls_model_name=var_cls_model.get(),
+        disable_gpu=var_disable_GPU.get(),
+        cls_detec_thresh=var_cls_detec_thresh.get(),
+        cls_class_thresh=var_cls_class_thresh.get(),
+        smooth_cls_animal=var_smooth_cls_animal.get(),
+        tax_fallback=var_tax_fallback.get(),
+        temp_frame_folder="",       # read from state or model_vars as needed
+        lang_idx=i18n_lang_idx(),
+    )
+
+    callbacks = OrchestratorCallbacks(
+        on_error=mb.showerror,
+        on_warning=mb.showwarning,
+        on_info=mb.showinfo,
+        on_confirm=mb.askyesno,
+        update_ui=root.update,
+        cancel_check=lambda: state.cancel_deploy_model_pressed,
+    )
+
+    def _cancel_factory(proc):
+        def _cancel():
+            cancel_subprocess(proc)
+            state.cancel_deploy_model_pressed = True
+            state.btn_start_deploy.configure(state=NORMAL)
+            state.sim_run_btn.configure(state=NORMAL)
+            state.progress_window.close()
+        return _cancel
+
+    run_classification(
+        config=config,
+        callbacks=callbacks,
+        json_fpath=json_fpath,
+        data_type=data_type,
+        cancel_func_factory=_cancel_factory,
+        simple_mode=simple_mode,
+    )
 ```
 
-**Why a single shared callbacks class instead of per-orchestrator:** All three orchestrators
-use the same messagebox patterns. A single class with clear method names is simpler than
-three similar-but-slightly-different classes.
+**Important:** Read `ClassifyConfig` in `context.py` to verify every field name matches
+exactly. Read `run_classification()` signature to verify argument names and types.
 
-**Tests:** Write tests verifying that all fields are callable and that a "headless"
-instance (logging callbacks) works without importing tkinter.
+**After replacing the body:** Run `make test`. The existing `test_pipeline.py` tests for
+`run_classification()` should still pass. The shim itself has no new tests needed.
 
-**Commit:** `feat: add OrchestratorCallbacks dataclass for GUI-free orchestration`
+**Commit:** `refactor: wire classify_detections() to call run_classification() (Step C3)`
 
-### Step B5: Extract subprocess stdout parsing
+### Step C4: Wire `deploy_model()` → `run_detection()`
 
-**What to do:** Extract the `for line in p.stdout:` parsing loops from `deploy_model()`
-and `classify_detections()` into pure functions.
+**What to do:** Replace the 324-line body of `deploy_model()` with a ~35-line shim.
 
-**File to create:** `addaxai/orchestration/stdout_parser.py`
+**Read first:** Read `deploy_model()` in app.py carefully — it currently calls
+`classify_detections()` at the end (after detection succeeds). Read `run_detection()` in
+`pipeline.py` — it does NOT call classification. The classification call must remain in the
+`deploy_model()` shim after the `run_detection()` call.
 
-**Functions to create:**
+**Current call chain:**
+```
+start_deploy() → deploy_model() → [run_detection, then classify_detections]
+```
+**After C4 the call chain becomes:**
+```
+start_deploy() → deploy_model() → [run_detection shim + classify_detections shim]
+```
 
-1. `parse_detection_stdout(stdout_lines, data_type, emit_progress, emit_error,
-   log_exception, log_warning, cancel_func_factory, frame_video_choice)`
-   - Returns a result indicating outcome: `"complete"`, `"no_images"`, `"no_videos"`,
-     `"no_frames"`, `"unicode_error"`
-   - The `emit_progress` callback must pass through the EXACT SAME kwargs that the
-     current `event_bus.emit(DEPLOY_PROGRESS, ...)` calls use. Read each existing emit
-     call and replicate kwargs exactly.
+**Shim structure:**
 
-2. `parse_classification_stdout(stdout_lines, data_type, emit_progress, emit_error,
-   log_exception, log_warning, cancel_func_factory)`
-   - Handles `<EA>` smoothing lines, `<EA-status-change>` lines, tqdm progress
-   - Returns `"complete"`, `"no_crops"`, etc.
+```python
+def deploy_model(path_to_image_folder, selected_options, data_type, simple_mode=False):
+    logger.debug("EXECUTED: %s", sys._getframe().f_code.co_name)
+    from addaxai.orchestration.pipeline import run_detection
+    from addaxai.orchestration.context import DeployConfig
+    from addaxai.orchestration.callbacks import OrchestratorCallbacks
 
-**How to find the parsing code:** In `app.py`, search for `for line in p.stdout:`. There
-are two instances — one in `deploy_model()` (detection) and one in `classify_detections()`
-(classification). The detection parser handles tqdm progress bars, GPU detection, frame
-extraction mode, error/warning lines, and UnicodeEncodeError detection. The classification
-parser additionally handles `<EA>` and `<EA-status-change>` protocol lines.
+    config = DeployConfig(
+        base_path=AddaxAI_files,
+        det_model_dir=DET_DIR,
+        det_model_name=var_det_model.get(),
+        det_model_path=var_det_model_path.get(),
+        cls_model_name=var_cls_model.get(),
+        disable_gpu=var_disable_GPU.get(),
+        use_abs_paths=var_abs_paths.get(),
+        source_folder=path_to_image_folder,
+        dpd_options_model=state.dpd_options_model,
+        lang_idx=i18n_lang_idx(),
+    )
 
-**The tqdm line format is:** `" 50%|████ | 5/10 [00:05<00:05, 1.0it/s]"`
-The existing regex parsing extracts: percentage, current_im, total_im, elapsed_time,
-time_left, processing_speed.
+    callbacks = OrchestratorCallbacks(
+        on_error=mb.showerror,
+        on_warning=mb.showwarning,
+        on_info=mb.showinfo,
+        on_confirm=mb.askyesno,
+        update_ui=root.update,
+        cancel_check=lambda: state.cancel_deploy_model_pressed,
+    )
 
-**Tests to write** (`tests/test_stdout_parser.py`, minimum 12):
-- Basic tqdm progress parsing with correct percentages, cur_it, tot_it
-- GPU detection (`"GPU available: True"` → hware="GPU", `False` → "CPU")
-- `"No image files found"` triggers error result
-- `"No videos found"` triggers error result
-- `"No frames extracted"` triggers error result
-- `"UnicodeEncodeError:"` triggers error result
-- Frame extraction mode: `"Extracting frames for folder"` → extracting_frames_txt set
-- Warning lines logged (but 4 exclusion patterns not logged)
-- Exception lines logged
-- Empty stdout — function completes without error, returns "complete"
-- Classification: `<EA-status-change>` updates status
-- Classification: `"n_crops_to_classify is zero"` → "no_crops" result
-- Classification: `<EA>` lines passed to smoothing handler
+    def _cancel_factory(proc):
+        def _cancel():
+            cancel_subprocess(proc)
+            state.cancel_deploy_model_pressed = True
+            state.btn_start_deploy.configure(state=NORMAL)
+            state.sim_run_btn.configure(state=NORMAL)
+            state.progress_window.close()
+        return _cancel
 
-**Commit:** `feat: extract subprocess stdout parsers into addaxai/orchestration/stdout_parser.py`
+    result = run_detection(
+        config=config,
+        callbacks=callbacks,
+        data_type=data_type,
+        selected_options=selected_options,
+        simple_mode=simple_mode,
+        cancel_func_factory=_cancel_factory,
+        error_log_path=state.model_error_log,
+        warning_log_path=state.model_warning_log,
+        current_version=current_AA_version,
+        smooth_cls_animal=var_smooth_cls_animal.get(),
+        warn_smooth_vid=state.warn_smooth_vid,
+    )
 
-### Step B6: Extract `deploy_model()` into `addaxai/orchestration/pipeline.py`
+    # preserve existing behavior: classify after successful detection
+    if result.success and var_cls_model.get() != t('none'):
+        json_fpath = result.json_path
+        classify_detections(json_fpath, data_type, simple_mode=simple_mode)
+```
 
-**What to do:** Create `run_detection()` in `pipeline.py` containing the orchestration
-logic currently in `deploy_model()`. The function takes `DeployConfig` +
-`OrchestratorCallbacks` and returns a result object.
+**Critical:** Read `DeployConfig` in `context.py` and `run_detection()` signature in
+`pipeline.py` to verify every field name and argument exactly. Do not guess field names.
 
-**File to create:** `addaxai/orchestration/pipeline.py`
+**After replacing the body:** Run `make test` and `make lint`. Then run `make dev` and do a
+manual smoke test to verify the GUI still starts and the deploy button is reachable.
 
-**The extracted function should:**
-1. Accept `DeployConfig`, `OrchestratorCallbacks`, and any remaining state fields
-   (cancel flag, error/warning logs, subprocess output holder) that don't fit in config
-2. Build the subprocess command (already partially in `addaxai/models/deploy.py`)
-3. Launch the subprocess and call `parse_detection_stdout()` from Step B5
-4. Handle the parse result (but NOT show messageboxes — return the result)
-5. Emit events via the event bus
-6. Return a `DetectionResult` dataclass with: `success: bool`, `json_path: Optional[str]`,
-   `error_code: Optional[str]`, `error_message: Optional[str]`
+**Commit:** `refactor: wire deploy_model() to call run_detection() (Step C4)`
 
-**What stays in `app.py`:**
-- Reading tkinter vars to build `DeployConfig`
-- Creating `OrchestratorCallbacks` pointing to `mb.showerror`, `root.update`, etc.
-- Calling `run_detection(config, callbacks)`
-- Checking the result and showing messageboxes / updating frames accordingly
-- The `classify_detections()` call at the end (becomes: check result, then call
-  `run_classification()`)
-
-**Detailed instructions:**
-
-1. Read `deploy_model()` in full (lines ~2806-3127). Note every module-level reference.
-2. Read `parse_detection_stdout()` from Step B5 — the parser handles the subprocess loop.
-3. The function structure after extraction:
-   ```python
-   def run_detection(
-       config: DeployConfig,
-       callbacks: OrchestratorCallbacks,
-       cancel_flag: ???,       # needs to be a mutable reference
-       error_log_path: str,
-       warning_log_path: str,
-   ) -> DetectionResult:
-   ```
-4. **The cancel flag problem:** `deploy_model()` checks
-   `state.cancel_deploy_model_pressed` which is set by the cancel button callback.
-   The extracted function needs a way to check this. Options:
-   - Pass `cancel_check: Callable[[], bool]` (already in OrchestratorCallbacks)
-   - Pass a mutable container (e.g., `[False]` list)
-   - Use `callbacks.cancel_check()` which reads the flag from wherever the caller stores it
-
-   Use `callbacks.cancel_check()` — it's already in the callbacks struct.
-
-5. **The smoothing warning:** `deploy_model()` shows `mb.askyesno()` about video
-   smoothing at the top. Use `callbacks.on_confirm()`. If it returns False, return
-   early with a cancelled result.
-
-6. Move the code. Run `make test`.
-
-**Known bug to fix during extraction:** Line ~2974 references `subprocess_output` as a
-bare name (should be `state.subprocess_output`). Fix this during the move — document in
-the commit message.
-
-**Tests:** Write tests in `tests/test_pipeline.py` that call `run_detection()` with mocked
-subprocess (`unittest.mock.patch('subprocess.Popen')`), a `DeployConfig` with test values,
-and headless `OrchestratorCallbacks`. Verify correct events are emitted and correct result
-is returned for success and error scenarios.
-
-**Commit:** `refactor: extract deploy_model() into addaxai/orchestration/pipeline.run_detection()`
-
-### Step B7: Extract `classify_detections()` into `pipeline.py`
-
-**What to do:** Same pattern as B6 for classification. Create `run_classification()`.
-
-**The extracted function should:**
-1. Accept `ClassifyConfig`, `OrchestratorCallbacks`, cancel flag
-2. Build the classification subprocess command
-3. Launch subprocess and call `parse_classification_stdout()` from Step B5
-4. Return `ClassificationResult` with: `success`, `json_path`, `error_code`,
-   `error_message`, `n_crops_classified`
-
-**What stays in `app.py`:** Reading tkinter vars → `ClassifyConfig`, creating callbacks,
-calling `run_classification()`, handling result.
-
-**Commit:** `refactor: extract classify_detections() into pipeline.run_classification()`
-
-### Step B8: Extract `postprocess()` and `start_postprocess()` into `pipeline.py`
-
-**What to do:** Create `run_postprocess()`. This is the hardest extraction because
-`postprocess()` is 972 lines with 4 `root.update()` calls, 1 `mb.askyesno()`, and
-references to `cancel`, `state`, and several module-level functions.
-
-**Approach:** Extract in two sub-steps:
-
-**B8a:** First extract `postprocess()` (the inner processing function). It takes many
-parameters already — add the remaining ones (`vis_blur`, `vis_bbox`, `vis_size_idx`,
-`cancel_check`, `update_ui`, `source_folder`) to make it GUI-free. Move it to
-`addaxai/orchestration/pipeline.py`. This is the big move (~972 lines).
-
-**B8b:** Then extract `start_postprocess()` — the wrapper that reads tkinter vars, creates
-ProgressWindow, calls postprocess twice (images + videos), and calls `complete_frame()`.
-The GUI-free version (`run_postprocess()`) takes `PostprocessConfig` +
-`OrchestratorCallbacks` and calls the extracted `postprocess()` internally. It returns
-`PostprocessResult`. The ProgressWindow creation and `complete_frame()` call stay in
-app.py — they are pure GUI concerns.
-
-**Commit (B8a):** `refactor: extract postprocess() into pipeline module`
-**Commit (B8b):** `refactor: extract start_postprocess() wrapper into run_postprocess()`
-
-### Step B9: Push, PR, merge
+### Step C5: Push, PR, merge
 
 ```bash
-git push -u origin phase7/orchestrator-decoupling
+git push -u origin phase7/wire-orchestrators
 gh pr create --repo TeodoroTopa/AddaxAI --base main \
-  --title "refactor: decouple orchestrators from GUI — enable headless detection" \
+  --title "refactor: wire app.py orchestrators to pipeline module (Phase 7c)" \
   --body "$(cat <<'EOF'
 ## Summary
-- Create addaxai/orchestration/ package with config dataclasses, callbacks, stdout
-  parser, and pipeline functions
-- Extract deploy_model() → run_detection()
-- Extract classify_detections() → run_classification()
-- Extract postprocess()/start_postprocess() → run_postprocess()
-- app.py reduced from ~8,273 to ~4,500 lines
-- All orchestrators callable without tkinter
+- Wire start_postprocess() → run_postprocess() (removes 146-line body)
+- Replace simple-mode postprocess() calls in start_deploy() with _postprocess_inner()
+- Delete postprocess() function (removes 972 lines)
+- Wire classify_detections() → run_classification() (removes 198-line body)
+- Wire deploy_model() → run_detection() (removes 324-line body)
+- Net: ~1,640 lines removed from app.py; orchestrators now GUI-free at runtime
 
 ## Test plan
 - [ ] All unit tests pass (make test)
-- [ ] New pipeline tests verify headless orchestration
+- [ ] Linter passes (make lint)
 - [ ] GUI smoke test passes (make test-smoke)
-- [ ] Manual test: full detection + classification + postprocess pipeline
+- [ ] Manual: launch GUI, verify deploy button reachable, postprocess tab loads
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
@@ -727,57 +680,44 @@ EOF
 
 ---
 
-## What Comes After Phase 7b
+## What Comes After Phase 7c
 
-Phase 7b delivers GUI-free orchestrators but does NOT address:
+Phase 7c delivers a wired, GUI-free orchestration layer. What remains in `app.py` (~6,100
+lines) is:
+1. **~50+ callback functions** — `toggle_cls_frame()`, `update_frame_states()`,
+   `change_language()`, `model_options()`, etc. These are pure GUI glue coupling multiple
+   tabs. Extracting them requires deciding on inter-module communication first.
+2. **`start_deploy()` validation** — the 700-line function bound to the deploy button.
+   Validates inputs, downloads models/environments, creates ProgressWindow, calls
+   `deploy_model()`. The model download/environment check flow has its own GUI dependencies.
+3. **HITL orchestration** — `start_or_continue_hitl()` and helpers are deeply coupled to
+   tkinter and warrant their own plan.
 
-1. **~50+ callback functions in app.py** — functions like `toggle_cls_frame()`,
-   `update_frame_states()`, `change_language()`, `model_options()` are pure GUI glue.
-   They reference widgets through `deploy_view.cls_frame`, `hitl_view.btn_hitl_main`,
-   etc. These could be moved into the respective UI modules, but the coupling between
-   them (e.g., `update_frame_states()` touches frames from multiple tabs) makes this
-   harder than it looks. Extracting these requires deciding on a clean inter-module
-   communication pattern first.
-
-2. **`start_deploy()` validation function** — this is the function bound to the deploy
-   button. It validates inputs, downloads models/environments if needed, creates the
-   ProgressWindow, and calls `run_detection()`. The model download/environment check
-   flow has its own GUI dependencies (patience window, confirmation dialogs). This is
-   a separate extraction effort.
-
-3. **HITL orchestration** — `start_or_continue_hitl()` and its helpers
-   (`open_annotation_windows()`, `open_hitl_settings_window()`, etc.) are deeply coupled
-   to tkinter. These should be extracted but the HITL workflow is complex enough to
-   warrant its own plan.
-
-**How to decide what to do next:** After Phase 7b, evaluate which future goal you want
-to pursue first:
-- If **cloud inference** or **REST API write endpoints**: build the headless runner and
-  API endpoint using the new `run_detection()`/`run_classification()` functions. The
-  remaining callback functions in app.py don't block this.
-- If **UI framework migration**: tackle the callback functions next, moving them into
-  UI modules with a clear event-based communication pattern.
-- If **production stability**: tackle Track B (bug fixes), starting with the Windows
-  file-in-use bug.
+**How to decide what to do next:**
+- For **cloud inference** or **REST API write endpoints**: the pipeline functions are now
+  callable without tkinter. Build a headless CLI runner or REST endpoint using
+  `run_detection()` / `run_classification()` / `run_postprocess()` directly.
+- For **UI framework migration**: tackle the callback functions, moving them into UI
+  modules with an event-based inter-module communication pattern.
+- For **production stability**: Track B (bug fixes), starting with the Windows file-in-use
+  bug in postprocessing.
 
 ---
 
 ## Track B: Bug Fixes & Quick Wins (Deferred)
 
-After the main extraction work is done, address these contained issues:
+After Phase 7c, address these contained issues:
 
 1. **Windows file-in-use bug** — Investigate `shutil.move` and file handle leaks in
    postprocessing. Likely involves `openpyxl`/`pandas` not closing file handles. Look
-   at the `postprocess()` function and its callers. Fix with explicit `close()` or
-   context managers.
+   at `_postprocess_inner()` in `pipeline.py` and its callers. Fix with explicit `close()`
+   or context managers.
 
 2. **LAT LON 0,0 filter** — In the map creation code (search for `folium` or `HeatMap`
-   usage in `app.py`), skip coordinates at exactly (0.0, 0.0) before plotting.
+   usage in `plots.py`), skip coordinates at exactly (0.0, 0.0) before plotting.
 
-3. **Completion messagebox** — At the end of `deploy_model()` (near line 3127), add a
+3. **Completion messagebox** — At the end of `run_detection()` in `pipeline.py`, add a
    summary messagebox showing: images processed, detections found, errors/warnings count.
-
-These are all small, contained fixes that don't require architectural changes.
 
 ---
 
@@ -787,7 +727,7 @@ These are all small, contained fixes that don't require architectural changes.
 `models/backend.py` defines the `InferenceBackend` protocol. A `CloudBackend`
 implementation would upload detection crops (~10KB each) to a hosted classification
 endpoint (HuggingFace Inference Endpoints or Replicate). MegaDetector runs locally
-(fast, no uploads). Requires headless deployment (Phase 7b).
+(fast, no uploads). Requires Phase 7c complete.
 
 ### Install with no models
 A download-on-demand architecture would let users install the app (~50MB) and download
@@ -796,12 +736,11 @@ browsing/downloading models.
 
 ### UI framework migration
 All business logic is framework-agnostic. Migrating from customtkinter to PySide6 is
-a contained effort limited to `addaxai/ui/` once the orchestrators are fully decoupled.
+a contained effort limited to `addaxai/ui/` once Phase 7c is complete.
 
 ### REST API write endpoints
 `addaxai/api/server.py` has read-only endpoints. Write endpoints (`POST /detect`,
-`GET /jobs/{id}`) would let external tools trigger detection headlessly. Requires
-headless deployment (Phase 7b).
+`GET /jobs/{id}`) would let external tools trigger detection headlessly. Requires Phase 7c.
 
 ### Additional languages
 The i18n system makes adding languages cheap: create a new JSON file, add the language
