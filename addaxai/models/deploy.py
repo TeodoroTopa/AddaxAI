@@ -138,6 +138,6 @@ def extract_label_map_from_model(model_file: str) -> Dict[Any, str]:
         del detector
         raise
 
-    del detector
+    del detector  # noqa: F821 — defined on line 130; ruff false positive
     logger.debug("Label map: %s", label_map)
     return label_map
