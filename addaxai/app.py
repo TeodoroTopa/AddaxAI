@@ -204,6 +204,20 @@ from addaxai.ui.advanced.help_tab import HyperlinkManager, write_help_tab
 from addaxai.ui.advanced.about_tab import write_about_tab
 from addaxai.ui.simple.simple_window import build_simple_mode
 from addaxai.core.state import AppState
+from addaxai.models.download import (
+    needs_update as _needs_update,
+    fetch_manifest as _fetch_manifest_extracted,
+    get_download_info as _get_download_info_extracted,
+    download_model_files as _download_model_files,
+    download_and_extract_env as _download_and_extract_env,
+)
+from addaxai.hitl.data import (
+    verification_status as hitl_verification_status,
+    check_if_img_needs_converting as hitl_check_if_img_needs_converting,
+    fetch_confs_per_class as hitl_fetch_confs_per_class,
+    update_json_from_img_list as hitl_update_json_from_img_list,
+    sync_unverified_images as hitl_sync_unverified_images,
+)
 from addaxai.core.logging import setup_logging
 from addaxai.core.events import event_bus
 
@@ -780,11 +794,11 @@ def open_annotation_windows(recognition_file, class_list_txt, file_list_txt, lab
                 annotation = return_xml_path(img, var_choose_folder.get())
 
                 # check which need converting to json
-                if check_if_img_needs_converting(img):
+                if hitl_check_if_img_needs_converting(img, var_choose_folder.get()):
                     imgs_needing_converting.append(img)
 
                 # check how many are verified
-                if verification_status(annotation):
+                if hitl_verification_status(annotation):
                     n_verified_files += 1
 
                 # update progress window
@@ -977,7 +991,7 @@ def open_annotation_windows(recognition_file, class_list_txt, file_list_txt, lab
         for line in f:
             img = line.rstrip()
             annotation = return_xml_path(img, var_choose_folder.get())
-            if check_if_img_needs_converting(img):
+            if hitl_check_if_img_needs_converting(img, var_choose_folder.get()):
                 imgs_needing_converting.append(img)
     converting_patience_dialog.update_progress(current = 1)
     converting_patience_dialog.close()
@@ -992,7 +1006,12 @@ def open_annotation_windows(recognition_file, class_list_txt, file_list_txt, lab
     current = 1
 
     # convert
-    update_json_from_img_list(imgs_needing_converting, inverted_label_map, recognition_file, patience_dialog, current)
+    current = hitl_update_json_from_img_list(
+        imgs_needing_converting, inverted_label_map, recognition_file,
+        base_folder=var_choose_folder.get(),
+        progress_callback=lambda c: patience_dialog.update_progress(current=c, percentage=True),
+        current=current,
+    )
     current += len(imgs_needing_converting)
 
     # open json
@@ -1000,31 +1019,16 @@ def open_annotation_windows(recognition_file, class_list_txt, file_list_txt, lab
         data = json.load(image_recognition_file_content)
 
     # check if there are images that the user first verified and then un-verified
-    for image in data['images']:
-        image_path = image['file']
-        patience_dialog.update_progress(current = current, percentage = True)
-        current += 1
-        if json_paths_are_relative:
-            image_path = os.path.join(os.path.dirname(recognition_file), image_path)
-        if 'manually_checked' in image:
-            if image['manually_checked']:
-                # image has been manually checked in json ...
-                xml_path = return_xml_path(image_path, var_choose_folder.get())
-                if os.path.isfile(xml_path):
-                    # ... but not anymore in xml
-                    if not verification_status(xml_path):
-                        # set check flag in json
-                        image['manually_checked'] = False
-                        # reset confidence from 1.0 to arbitrary value
-                        if 'detections' in image:
-                            for detection in image['detections']:
-                                detection['conf'] = 0.7
+    current = hitl_sync_unverified_images(
+        data, recognition_file, var_choose_folder.get(),
+        relative_paths=json_paths_are_relative,
+        progress_callback=lambda c: patience_dialog.update_progress(current=c, percentage=True),
+        current=current,
+    )
 
     # write json
-    image_recognition_file_content.close()
     with open(recognition_file, "w") as json_file:
         json.dump(data, json_file, indent=1)
-    image_recognition_file_content.close()
     patience_dialog.close()
 
     # finalise things if all images are verified
@@ -1243,77 +1247,9 @@ def start_or_continue_hitl():
                         "Il semble que vous ayez déjà complété la dernière session de vérification. Souhaitez-vous démarrer un nouvelle session?"][i18n_lang_idx()]):
             open_hitl_settings_window()
 
-# open xml and check if the data is already in the json
-def check_if_img_needs_converting(img_file):
-    # open xml
-    root = ET.parse(return_xml_path(img_file, var_choose_folder.get())).getroot()
-
-    # read verification status
-    try:
-        verification_status = True if root.attrib['verified'] == 'yes' else False
-    except:
-        verification_status = False
-
-    # read json update status
-    try:
-        json_update_status = True if root.attrib['json_updated'] == 'yes' else False
-    except:
-        json_update_status = False
-
-    # return whether or not it needs converting to json
-    if verification_status == True and json_update_status == False:
-        return True
-    else:
-        return False
 
 
 
-# update json from list with verified images
-def update_json_from_img_list(verified_images, inverted_label_map, recognition_file, patience_dialog, current):
-
-        # check if the json has relative paths
-        if check_json_paths(recognition_file, var_choose_folder.get()) == "relative":
-            json_paths_are_relative = True
-        else:
-            json_paths_are_relative = False
-
-        # open
-        with open(recognition_file, "r") as image_recognition_file_content:
-            data = json.load(image_recognition_file_content)
-
-        # adjust
-        for image in data['images']:
-            image_path = image['file']
-            if json_paths_are_relative:
-                image_path = os.path.normpath(os.path.join(os.path.dirname(recognition_file), image_path))
-            if image_path in verified_images:
-
-                # update progress
-                patience_dialog.update_progress(current = current, percentage = True)
-                current += 1
-
-                # read
-                xml = return_xml_path(image_path, var_choose_folder.get())
-                coco, verification_status, new_class, inverted_label_map = convert_xml_to_coco(xml, inverted_label_map)
-                image['manually_checked'] = verification_status
-                if new_class:
-                    data['detection_categories'] = {v: k for k, v in inverted_label_map.items()}
-                if verification_status:
-                    image['detections'] = coco['detections']
-
-                    # adjust xml file
-                    tree = ET.parse(xml)
-                    root = tree.getroot()
-                    root.set('json_updated', 'yes')
-                    indent_xml(root)
-                    tree.write(xml)
-        image_recognition_file_content.close()
-
-        # write
-        logger.debug("Writing recognition file: %s", recognition_file)
-        with open(recognition_file, "w") as json_file:
-            json.dump(data, json_file, indent=1)
-        image_recognition_file_content.close()
 
 # write model specific variables to file
 def write_model_vars(model_type="cls", new_values = None):
@@ -1499,41 +1435,15 @@ def start_deploy(simple_mode = False):
 
     # check if there are any images or videos in the folder
     chosen_folder = var_choose_folder.get()
-    if simple_mode:
-        check_img_presence = True
-        check_vid_presence = True
-    else:
-        check_img_presence = var_process_img.get()
-        check_vid_presence = var_process_vid.get()
-    img_present = False
-    vid_present = False
-    if var_exclude_subs.get():
-        # non recursive
-        for f in os.listdir(chosen_folder):
-            if check_img_presence:
-                if f.lower().endswith(IMG_EXTENSIONS):
-                    img_present = True
-            if check_vid_presence:
-                if f.lower().endswith(VIDEO_EXTENSIONS):
-                    vid_present = True
-            if (img_present and vid_present) or \
-                (img_present and not check_vid_presence) or \
-                    (vid_present and not check_img_presence) or \
-                        (not check_img_presence and not check_vid_presence):
-                break
-    else:
-        # recursive
-        for main_dir, _, files in os.walk(chosen_folder):
-            for file in files:
-                if check_img_presence and file.lower().endswith(IMG_EXTENSIONS):
-                    img_present = True
-                if check_vid_presence and file.lower().endswith(VIDEO_EXTENSIONS):
-                    vid_present = True
-            if (img_present and vid_present) or \
-                (img_present and not check_vid_presence) or \
-                    (vid_present and not check_img_presence) or \
-                        (not check_img_presence and not check_vid_presence):
-                    break
+    from addaxai.orchestration.deploy_helpers import scan_media_presence
+    img_present, vid_present = scan_media_presence(
+        folder=chosen_folder,
+        check_img=True if simple_mode else var_process_img.get(),
+        check_vid=True if simple_mode else var_process_vid.get(),
+        exclude_subs=var_exclude_subs.get(),
+        img_extensions=IMG_EXTENSIONS,
+        vid_extensions=VIDEO_EXTENSIONS,
+    )
 
     # check if user selected to process either images or videos
     if not img_present and not vid_present:
@@ -1775,32 +1685,22 @@ def start_deploy(simple_mode = False):
         "var_sppnet_location_idx": dpd_options_sppnet_location.index(var_sppnet_location.get()),
     })
 
-    # simple_mode and advanced mode shared image settings
-    additional_img_options = ["--output_relative_filenames"]
-
-    # simple_mode and advanced mode shared video settings
-    additional_vid_options = ["--json_confidence_threshold=0.01"]
-    if state.timelapse_mode:
-        additional_vid_options.append("--include_all_processed_frames")
+    # create temp frame folder if classifying videos
     temp_frame_folder_created = False
-    if vid_present:
-        if var_cls_model.get() != t('none'):
-            temp_frame_folder_obj = tempfile.TemporaryDirectory()
-            temp_frame_folder_created = True
-            state.temp_frame_folder = temp_frame_folder_obj.name
-            additional_vid_options.append("--frame_folder=" + state.temp_frame_folder)
-            additional_vid_options.append("--keep_extracted_frames")
+    _temp_frame_folder_str = ""
+    if vid_present and var_cls_model.get() != t('none'):
+        temp_frame_folder_obj = tempfile.TemporaryDirectory()
+        temp_frame_folder_created = True
+        state.temp_frame_folder = temp_frame_folder_obj.name
+        _temp_frame_folder_str = state.temp_frame_folder
 
-
-    # if user deployed from simple mode everything will be default, so easy
     if simple_mode:
-
-        # simple mode specific image options
-        additional_img_options.append("--recursive")
-
-        # simple mode specific video options
-        additional_vid_options.append("--recursive")
-        additional_vid_options.append("--time_sample=1")
+        from addaxai.orchestration.deploy_helpers import build_deploy_options
+        additional_img_options, additional_vid_options = build_deploy_options(
+            simple_mode=True,
+            timelapse_mode=state.timelapse_mode,
+            temp_frame_folder=_temp_frame_folder_str,
+        )
 
     # if the user comes from the advanced mode, there are more settings to be checked
     else:
@@ -1872,48 +1772,34 @@ def start_deploy(simple_mode = False):
                 sim_run_btn.configure(state=NORMAL)
                 return
 
-        # create command for the image process to be passed on to run_detector_batch.py
-        if not var_exclude_subs.get():
-            additional_img_options.append("--recursive")
-        if var_use_checkpnts.get():
-            additional_img_options.append("--checkpoint_frequency=" + var_checkpoint_freq.get())
-        if var_cont_checkpnt.get() and check_checkpnt():
-            additional_img_options.append("--resume_from_checkpoint=" + state.loc_chkpnt_file)
-        if var_use_custom_img_size_for_deploy.get():
-            additional_img_options.append("--image_size=" + var_image_size_for_deploy.get())
-
-        # create command for the video process to be passed on to process_video.py
-        if not var_exclude_subs.get():
-            additional_vid_options.append("--recursive")
-        if var_not_all_frames.get():
-            additional_vid_options.append("--time_sample=" + var_nth_frame.get())
+        # build CLI option lists for image and video detection
+        from addaxai.orchestration.deploy_helpers import build_deploy_options
+        _chkpnt_path = state.loc_chkpnt_file if (var_cont_checkpnt.get() and check_checkpnt()) else ""
+        additional_img_options, additional_vid_options = build_deploy_options(
+            simple_mode=False,
+            exclude_subs=var_exclude_subs.get(),
+            use_checkpoints=var_use_checkpnts.get(),
+            checkpoint_freq=var_checkpoint_freq.get(),
+            cont_checkpoint=var_cont_checkpnt.get(),
+            checkpoint_path=_chkpnt_path,
+            custom_img_size=var_image_size_for_deploy.get() if var_use_custom_img_size_for_deploy.get() else "",
+            not_all_frames=var_not_all_frames.get(),
+            nth_frame=var_nth_frame.get(),
+            timelapse_mode=state.timelapse_mode,
+            temp_frame_folder=_temp_frame_folder_str,
+        )
 
 
     # open progress window with frames for each process that needs to be done
     state.progress_window = ProgressWindow(processes = processes, master=root, scale_factor=scale_factor, padx=PADX, pady=PADY, green_primary=green_primary)
     state.progress_window.open()
 
-    # check the chosen folder of special characters and alert the user is there are any
-    isolated_special_fpaths = {"total_saved_images": 0}
-    for main_dir, _, files in os.walk(chosen_folder):
-        for file in files:
-            file_path = os.path.join(main_dir, file)
-            if os.path.splitext(file_path)[1].lower() in ['.jpg', '.jpeg', '.png', '.mp4', '.avi', '.mpeg', '.mpg']:
-                bool, char = contains_special_characters(file_path)
-                if bool:
-                    drive, rest_of_path = os.path.splitdrive(file_path)
-                    path_components = rest_of_path.split(os.path.sep)
-                    isolated_special_fpath = drive
-                    for path_component in path_components: # check the largest dir that is faulty
-                        isolated_special_fpath = os.path.join(isolated_special_fpath, path_component)
-                        if contains_special_characters(path_component)[0]:
-                            isolated_special_fpaths["total_saved_images"] += 1
-                            if isolated_special_fpath in isolated_special_fpaths:
-                                isolated_special_fpaths[isolated_special_fpath][0] += 1
-                            else:
-                                isolated_special_fpaths[isolated_special_fpath] = [1, char]
-    n_special_chars = len(isolated_special_fpaths) - 1
-    total_saved_images = isolated_special_fpaths['total_saved_images'];del isolated_special_fpaths['total_saved_images']
+    # check the chosen folder for special characters and alert the user if there are any
+    from addaxai.orchestration.deploy_helpers import scan_special_characters
+    _special_result = scan_special_characters(chosen_folder)
+    total_saved_images = _special_result["total_files"]
+    isolated_special_fpaths = _special_result["paths"]
+    n_special_chars = len(isolated_special_fpaths)
 
     if total_saved_images > 0:
         # write to log file
@@ -2228,27 +2114,8 @@ def produce_graph(file_list_txt = None, dir = None):
 
     # if a list with images is specified
     if file_list_txt:
-        count_dict = {}
-
-        # loop through the files
-        with open(file_list_txt) as f:
-            for line in f:
-
-                # open xml
-                img = line.rstrip()
-                annotation = return_xml_path(img, var_choose_folder.get())
-                tree = ET.parse(annotation)
-                root = tree.getroot()
-
-                # loop through detections
-                for obj in root.findall('object'):
-
-                    # add detection to dict
-                    name = obj.findtext('name')
-                    if name not in count_dict:
-                        count_dict[name] = 0
-                    count_dict[name] += 1
-            f.close()
+        from addaxai.hitl.data import count_annotations_per_class
+        count_dict = count_annotations_per_class(file_list_txt, var_choose_folder.get())
 
         # create plot
         classes = list(count_dict.keys())
@@ -2553,21 +2420,6 @@ def select_detections(selection_dict, prepare_files):
 
 
 
-# count confidence values per class for histograms
-def fetch_confs_per_class(json_fpath):
-    label_map = fetch_label_map_from_json(os.path.join(var_choose_folder.get(), 'image_recognition_file.json'))
-    confs = {}
-    for key in label_map:
-        confs[key] = []
-    with open(json_fpath) as content:
-        data = json.load(content)
-        for image in data['images']:
-            if 'detections' in image:
-                for detection in image['detections']:
-                    conf = detection["conf"]
-                    category = detection["category"]
-                    confs[category].append(conf)
-    return confs
 
 # open the human-in-the-loop settings window
 def open_hitl_settings_window():
@@ -2577,7 +2429,7 @@ def open_hitl_settings_window():
     # TODO: this window pops up behind the main AddaxAI window on windows OS. place in front, or hide AddaxAI frame.
 
     # fetch confs for histograms
-    confs = fetch_confs_per_class(os.path.join(var_choose_folder.get(), 'image_recognition_file.json'))
+    confs = hitl_fetch_confs_per_class(os.path.join(var_choose_folder.get(), 'image_recognition_file.json'), var_choose_folder.get())
 
     # HITL state stored in AppState
 
@@ -2924,15 +2776,6 @@ def open_hitl_settings_window():
     h = hitl_settings_main_frame.winfo_height() + 10
     hitl_settings_window.geometry(f'{w}x{h}')
 
-# helper function to quickly check the verification status of xml
-def verification_status(xml):
-    tree = ET.parse(xml)
-    root = tree.getroot()
-    try:
-        verification_status = True if root.attrib['verified'] == 'yes' else False
-    except:
-        verification_status = False
-    return verification_status
 
 
 
@@ -3152,46 +2995,10 @@ def deploy_speciesnet(chosen_folder, sppnet_output_window, simple_mode = False):
 
     # convert JSON to AddaxAI format if not in timelapse mode
     else:
+        from addaxai.processing.speciesnet import reclassify_speciesnet_detections
         with open(recognition_file) as image_recognition_file_content:
             data = json.load(image_recognition_file_content)
-
-            # fetch and invert label maps
-            cls_label_map = data['classification_categories']
-            det_label_map = data['detection_categories']
-            inverted_cls_label_map = {v: k for k, v in cls_label_map.items()}
-            inverted_det_label_map = {v: k for k, v in det_label_map.items()}
-
-            # add cls classes to det label map
-            # if a model shares category names with MD, add to existing value
-            for k, _ in inverted_cls_label_map.items():
-                if k in inverted_det_label_map.keys():
-                    value = str(inverted_det_label_map[k])
-                    inverted_det_label_map[k] = value
-                else:
-                    inverted_det_label_map[k] = str(len(inverted_det_label_map) + 1)
-
-            # loop and adjust
-            for image in data['images']:
-                if 'detections' in image and image['detections'] is not None:
-                    for detection in image['detections']:
-                        category_id = detection['category']
-                        category_conf = detection['conf']
-                        if category_conf >= cls_detec_thresh and det_label_map[category_id] == "animal":
-                            if 'classifications' in detection:
-                                highest_classification = detection['classifications'][0]
-                                class_idx = highest_classification[0]
-                                class_name = cls_label_map[class_idx]
-                                detec_idx = inverted_det_label_map[class_name]
-                                detection['prev_conf'] = detection["conf"]
-                                detection['prev_category'] = detection['category']
-                                detection["conf"] = highest_classification[1]
-                                detection['category'] = str(detec_idx)
-
-        # write json to be used by AddaxAI
-        data['detection_categories_original'] = data['detection_categories']
-        data['detection_categories'] = {v: k for k, v in inverted_det_label_map.items()}
-
-        # overwrite the file wit adjusted data
+        reclassify_speciesnet_detections(data, cls_detec_thresh)
         with open(recognition_file, "w") as json_file:
             json.dump(data, json_file, indent=1)
 
@@ -3963,265 +3770,116 @@ def show_release_info(release):
     updat_btn = customtkinter.CTkButton(btns_frm, text="Update", command=update)
     updat_btn.grid(row=0, column=1, padx=(0, PADX), pady=PADY, sticky="nwse")
 
-# check if the user needs an update
 def needs_EA_update(required_version):
-    current_parts = list(map(int, current_AA_version.split('.')))
-    required_parts = list(map(int, required_version.split('.')))
+    return _needs_update(current_AA_version, required_version)
 
-    # Pad the shorter version with zeros
-    while len(current_parts) < len(required_parts):
-        current_parts.append(0)
-    while len(required_parts) < len(current_parts):
-        required_parts.append(0)
-
-    # Compare each part of the version
-    for current, required in zip(current_parts, required_parts):
-        if current < required:
-            return True  # current_version is lower than required_version
-        elif current > required:
-            return False  # current_version is higher than required_version
-
-    # All parts are equal, consider versions equal
-    return False
-
-# download required files for a particular model
 def download_model(model_dir, skip_ask=False):
-    # init vars
     model_title = os.path.basename(model_dir)
     model_type = os.path.basename(os.path.dirname(model_dir))
-    model_vars = load_model_vars(model_type = model_type)
+    model_vars = load_model_vars(model_type=model_type)
     download_info = model_vars["download_info"]
     total_download_size = model_vars["total_download_size"]
 
-    # download
+    # ask user
+    if not skip_ask:
+        if not mb.askyesno(["Download required", "Descarga necesaria", "Téléchargement requis"][i18n_lang_idx()],
+                        [f"The model {model_title} is not downloaded yet. It will take {total_download_size}"
+                        f" of storage. Do you want to download?", f"El modelo {model_title} aún no se ha descargado."
+                        f" Ocupará {total_download_size} de almacenamiento. ¿Desea descargarlo?",
+                        f"Le modèle {model_title} n'a pas encore été téléchargé. Il occupera {total_download_size}"
+                        f" d'espace disque. Souhaitez-vous le télécharger?"][i18n_lang_idx()]):
+            return False
+
+    # GUI progress window
+    download_popup = ModelDownloadProgressWindow(
+        model_title=model_title, total_size_str=total_download_size,
+        master=root, scale_factor=scale_factor, padx=PADX, pady=PADY,
+        green_primary=green_primary, open_nosleep_func=open_nosleep_page)
+    download_popup.open()
+
     try:
-        # check if the user wants to download
-        if not skip_ask:
-            if not mb.askyesno(["Download required", "Descarga necesaria", "Téléchargement requis"][i18n_lang_idx()],
-                            [f"The model {model_title} is not downloaded yet. It will take {total_download_size}"
-                            f" of storage. Do you want to download?", f"El modelo {model_title} aún no se ha descargado."
-                            f" Ocupará {total_download_size} de almacenamiento. ¿Desea descargarlo?",
-                            f"Le modèle {model_title} n'a pas encore été téléchargé. Il occupera {total_download_size}"
-                            f" d'espace disque. Souhaitez-vous le télécharger?"][i18n_lang_idx()]):
-                return False
-
-        # set headers to trick host to thinking we are a browser
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:66.0) Gecko/20100101 Firefox/66.0",
-            "Accept-Encoding": "*",
-            "Connection": "keep-alive"
-        }
-
-        # some models have multiple files to be downloaded
-        # check the total size first
-        total_size = 0
-        for download_url, _ in download_info:
-            response = requests.get(download_url, stream=True, timeout=30, headers=headers)
-            response.raise_for_status()
-            total_size += int(response.headers.get('content-length', 0))
-
-        # if yes, initiate download and show progress
-        progress_bar = tqdm(total=total_size, unit='B', unit_scale=True)
-        download_popup = ModelDownloadProgressWindow(model_title = model_title, total_size_str = format_size(total_size), master=root, scale_factor=scale_factor, padx=PADX, pady=PADY, green_primary=green_primary, open_nosleep_func=open_nosleep_page)
-        download_popup.open()
-        for download_url, fname in download_info:
-            file_path = os.path.normpath(os.path.join(model_dir, fname))
-            dir_name = os.path.dirname(file_path)
-            if dir_name:
-                os.makedirs(dir_name, exist_ok=True)
-            response = requests.get(download_url, stream=True, timeout=30, headers=headers)
-            response.raise_for_status()
-
-            with open(file_path, 'wb') as file:
-                for chunk in response.iter_content(chunk_size=65536):
-                    if chunk:
-                        file.write(chunk)
-                        progress_bar.update(len(chunk))
-                        percentage_done = progress_bar.n / total_size
-                        download_popup.update_progress(percentage_done)
-        progress_bar.close()
+        _download_model_files(
+            model_dir=model_dir,
+            download_info=download_info,
+            progress_callback=download_popup.update_progress,
+        )
         download_popup.close()
-        logger.info("Download successful. File saved at: %s", file_path)
         return True
-
-    # catch errors
     except Exception as error:
         logger.error("ERROR: %s", error, exc_info=True)
         try:
-            # remove incomplete download
-            if os.path.isfile(file_path):
-                os.remove(file_path)
-        except UnboundLocalError:
-            # file_path is not set, meaning there is no incomplete download
+            download_popup.close()
+        except Exception:
             pass
         show_download_error_window(model_title, model_dir, model_vars)
+        return False
 
-# fetch platform manifest from GitHub Release assets
 def _fetch_manifest(platform_prefix):
-    """Fetch the platform manifest from GitHub Release assets.
-    Try pinned version first, fall back to latest."""
-    repo = "PetervanLunteren/AddaxAI"
-    manifest_name = f"{platform_prefix}-manifest.json"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:66.0) Gecko/20100101 Firefox/66.0",
-        "Accept-Encoding": "*",
-        "Connection": "keep-alive"
-    }
-    for url in [
-        f"https://github.com/{repo}/releases/download/v{current_AA_version}/{manifest_name}",
-        f"https://github.com/{repo}/releases/latest/download/{manifest_name}",
-    ]:
-        try:
-            resp = requests.get(url, timeout=60, headers=headers, allow_redirects=True)
-            resp.raise_for_status()
-            return resp.json(), url.rsplit("/", 1)[0]
-        except Exception:
-            continue
-    raise RuntimeError(f"Could not fetch {manifest_name} from GitHub releases")
+    return _fetch_manifest_extracted(platform_prefix, current_AA_version)
 
-
-# get download info from manifest
 def _get_download_info(manifest, base_url, asset_key):
-    """Return (list_of_urls, total_size) for a given asset key."""
-    entry = manifest[asset_key]
-    urls = [f"{base_url}/{part}" for part in entry["parts"]]
-    return urls, entry["total_size"]
+    return _get_download_info_extracted(manifest, base_url, asset_key)
 
 
 # download environment
 def download_environment(env_name, model_vars, skip_ask=False):
+    from addaxai.models.download import fetch_manifest, get_download_info
+    from addaxai.processing.postprocess import format_size as _format_size
 
-    # download
+    env_dir = os.path.join(AddaxAI_files, "envs")
+
+    # linux installs during setup
+    if os.name != 'nt' and platform.system() != 'Darwin':
+        return False
+
+    # determine platform params for size display in confirmation dialog
+    platform_prefix = "windows" if os.name == 'nt' else "macos"
+    asset_key = f"{platform_prefix}-env-{env_name}.zip" if os.name == 'nt' else f"macos-env-{env_name}.tar.xz"
+
     try:
+        manifest, base_url = fetch_manifest(platform_prefix, current_AA_version)
+        _, total_size = get_download_info(manifest, base_url, asset_key)
+    except Exception:
+        total_size = 0
 
-        env_dir = os.path.join(AddaxAI_files, "envs")
-        # set environment variables
-        if os.name == 'nt': # windows
-            platform_prefix = "windows"
-            asset_key = f"windows-env-{env_name}.zip"
-            filename = f"{env_name}.zip"
-        elif platform.system() == 'Darwin': # macos
-            import tarfile
-            platform_prefix = "macos"
-            asset_key = f"macos-env-{env_name}.tar.xz"
-            filename = f"{env_name}.tar.xz"
-        else: # linux
-            return False # linux install this during setup
+    # ask user
+    if not skip_ask:
+        if not mb.askyesno(["Download required", "Descarga necesaria", "Téléchargement requis"][i18n_lang_idx()],
+                        [f"The model you selected needs the virtual environment '{env_name}', which is not downloaded yet. It will take {_format_size(total_size)}"
+                        f" of storage. Do you want to download?", f"El envo {env_name} aún no se ha descargado."
+                        f" Ocupará {_format_size(total_size)} de almacenamiento. ¿Desea descargarlo?",
+                        f"Le modèle sélectionné requiert un environnement virtuel '{env_name}', qui n'est pas encore téléchargé. Il occupera {_format_size(total_size)}"
+                        f" d'espace disque. Souhaitez-vous le télécharger?"][i18n_lang_idx()]):
+            return False
 
-        # set headers to trick host to thinking we are a browser
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:66.0) Gecko/20100101 Firefox/66.0",
-            "Accept-Encoding": "*",
-            "Connection": "keep-alive"
-        }
+    # GUI progress window
+    download_popup = EnvDownloadProgressWindow(
+        env_title=env_name, total_size_str=_format_size(total_size),
+        master=root, scale_factor=scale_factor, padx=PADX, pady=PADY,
+        green_primary=green_primary, open_nosleep_func=open_nosleep_page)
+    download_popup.open()
 
-        # fetch manifest and get download info
-        manifest, base_url = _fetch_manifest(platform_prefix)
-        part_urls, total_size = _get_download_info(manifest, base_url, asset_key)
-
-        # check if the user wants to download
-        if not skip_ask:
-            if not mb.askyesno(["Download required", "Descarga necesaria", "Téléchargement requis"][i18n_lang_idx()],
-                            [f"The model you selected needs the virtual environment '{env_name}', which is not downloaded yet. It will take {format_size(total_size)}"
-                            f" of storage. Do you want to download?", f"El envo {env_name} aún no se ha descargado."
-                            f" Ocupará {format_size(total_size)} de almacenamiento. ¿Desea descargarlo?",
-                            f"Le modèle sélectionné requiert un environnement virtuel '{env_name}', qui n'est pas encore téléchargé. Il occupera {format_size(total_size)}"
-                            f" d'espace disque. Souhaitez-vous le télécharger?"][i18n_lang_idx()]):
-                return False
-
-        # if yes, initiate download and show progress
-        progress_bar = tqdm(total=total_size, unit='B', unit_scale=True)
-        download_popup = EnvDownloadProgressWindow(env_title = env_name, total_size_str = format_size(total_size), master=root, scale_factor=scale_factor, padx=PADX, pady=PADY, green_primary=green_primary, open_nosleep_func=open_nosleep_page)
-        download_popup.open()
-        file_path = os.path.join(env_dir, filename)
-        with open(file_path, 'wb') as file:
-            for part_url in part_urls:
-                response = requests.get(part_url, stream=True, timeout=60, headers=headers)
-                response.raise_for_status()
-                for chunk in response.iter_content(chunk_size=65536):
-                    if chunk:
-                        file.write(chunk)
-                        progress_bar.update(len(chunk))
-                        percentage_done = progress_bar.n / total_size
-                        download_popup.update_download_progress(percentage_done)
-        progress_bar.close()
-        logger.info("Download successful. File saved at: %s", file_path)
-
-        # After download, begin extraction
-        if filename.endswith(".tar.xz"):
-            # Extract the .tar.xz file
-            with tarfile.open(file_path, "r:xz") as tar:
-                # Get the total number of files to be extracted
-                total_files = len(tar.getnames())
-                extraction_progress_bar = tqdm(total=total_files, unit='file', desc="Extracting")
-
-                # Extract each file and update the extraction progress
-                for member in tar:
-                    tar.extract(member, path=env_dir)
-                    extraction_progress_bar.update(1)
-                    extraction_progress_percentage = extraction_progress_bar.n / total_files
-                    download_popup.update_extraction_progress(extraction_progress_percentage)
-                extraction_progress_bar.close()
-            download_popup.close()
-            logger.info("Extraction successful. Files extracted to: %s", env_dir)
-
-            # Remove the .tar.xz file after extraction
-            try:
-                os.remove(file_path)
-                logger.info("Removed the .tar.xz file: %s", file_path)
-            except Exception as e:
-                logger.warning("Error removing file: %s", e)
-
-        if filename.endswith(".zip"):
-            import zipfile
-            # open the zip file for extraction
-            with zipfile.ZipFile(file_path, 'r') as zip_ref:
-                # get the total number of files to be extracted
-                total_files = len(zip_ref.namelist())
-                extraction_progress_bar = tqdm(total=total_files, unit='file', desc="Extracting")
-
-                # extract each file and update the extraction progress
-                for member in zip_ref.namelist():
-                    zip_ref.extract(member, path=env_dir)
-                    extraction_progress_bar.update(1)
-                    extraction_progress_percentage = extraction_progress_bar.n / total_files
-                    download_popup.update_extraction_progress(extraction_progress_percentage)
-                extraction_progress_bar.close()
-            download_popup.close()
-            logger.info("Extraction successful. Files extracted to: %s", env_dir)
-
-            # Remove the zip file after extraction
-            try:
-                os.remove(file_path)
-                logger.info("Removed the zip file: %s", file_path)
-            except Exception as e:
-                logger.warning("Error removing file: %s", e)
-
-        # return success
+    try:
+        _download_and_extract_env(
+            env_name=env_name,
+            env_dir=env_dir,
+            current_version=current_AA_version,
+            download_progress_callback=download_popup.update_download_progress,
+            extraction_progress_callback=download_popup.update_extraction_progress,
+        )
+        download_popup.close()
         return True
-
-    # catch errors
     except Exception as error:
         logger.error("ERROR: %s", error, exc_info=True)
         try:
-            # remove incomplete archive
-            if os.path.isfile(file_path):
-                os.remove(file_path)
-
-            # remove incomplete extracted dir
             extracted_dir = os.path.join(env_dir, f"env-{env_name}")
             if os.path.isdir(extracted_dir):
                 shutil.rmtree(extracted_dir)
-
-            # close popup
             download_popup.close()
-
-        except UnboundLocalError:
-            # file_path is not set, meaning there is no incomplete download
+        except Exception:
             pass
-
-        # show internet options
         show_download_error_window_env(env_name, env_dir, model_vars)
+        return False
 
 
 ##############################################

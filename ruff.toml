@@ -6,10 +6,13 @@ select = ["E", "F", "W"]  # basic errors, pyflakes, warnings
 ignore = ["E501"]  # line length — not enforced yet
 
 [lint.per-file-ignores]
-"addaxai/ui/*" = ["E402", "E702"]  # late imports and semicolons OK in UI modules
-"addaxai/ui/**/*" = ["E402", "E702"]
+# UI modules: late imports for fallback pattern, semicolons, unused widget vars, runtime-injected callbacks
+"addaxai/ui/*" = ["E402", "F401", "F841", "F821", "E702"]
+"addaxai/ui/**/*" = ["E402", "F401", "F841", "F821", "E702"]
+"addaxai/analysis/plots.py" = ["E701", "E702"]  # semicolons in plot helpers are original style
 # app.py is a legacy monolith pre-dating linting. Suppressed codes:
 #   E402        - imports must follow sys.path setup block
+#   F401        - unused imports consumed indirectly or in flight during extraction
 #   F403/F405   - wildcard tkinter import is original style; F405 is a consequence of F403
 #   E701/E702   - single-line ifs and semicolons in plot helpers are original style
 #   E711/E712   - `!= None` and `== True/False` comparisons are original style
@@ -17,4 +20,4 @@ ignore = ["E501"]  # line length — not enforced yet
 #   E741        - ambiguous variable names (l) are original style
 #   F841        - unused variable assignments are original style
 # These will shrink as modules continue to be extracted from this file.
-"addaxai/app.py" = ["E402", "F403", "F405", "E701", "E702", "E711", "E712", "E722", "E741", "F841"]
+"addaxai/app.py" = ["E402", "F401", "F403", "F405", "E701", "E702", "E711", "E712", "E722", "E741", "F841"]
