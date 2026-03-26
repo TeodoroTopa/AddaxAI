@@ -160,3 +160,51 @@ class TestUpdateJsonFromImgList:
         params = inspect.signature(update_json_from_img_list).parameters
         assert "progress_callback" in params
         assert "patience_dialog" not in params
+
+
+# ─── count_annotations_per_class ────────────────────────────────────────────
+
+class TestCountAnnotationsPerClass:
+    def test_importable(self):
+        from addaxai.hitl.data import count_annotations_per_class  # noqa: F401
+
+    def test_counts_from_file_list(self, tmp_path):
+        from addaxai.hitl.data import count_annotations_per_class
+        import xml.etree.ElementTree as _ET
+
+        base = tmp_path / "project"
+        base.mkdir()
+        temp_folder = base / "temp-folder"
+        temp_folder.mkdir()
+
+        # Create two XML annotations
+        for name, classes in [("img1.jpg", ["animal", "person"]), ("img2.jpg", ["animal"])]:
+            xml_path = temp_folder / name.replace(".jpg", ".xml")
+            root = _ET.Element("annotation")
+            _ET.SubElement(root, "filename").text = name
+            for cls in classes:
+                obj = _ET.SubElement(root, "object")
+                _ET.SubElement(obj, "name").text = cls
+            _ET.ElementTree(root).write(str(xml_path))
+
+        # Write file list
+        file_list = tmp_path / "file_list.txt"
+        file_list.write_text(
+            str(base / "img1.jpg") + "\n" + str(base / "img2.jpg") + "\n")
+
+        result = count_annotations_per_class(str(file_list), str(base))
+        assert result == {"animal": 2, "person": 1}
+
+    def test_empty_file_list(self, tmp_path):
+        from addaxai.hitl.data import count_annotations_per_class
+        file_list = tmp_path / "empty.txt"
+        file_list.write_text("")
+        result = count_annotations_per_class(str(file_list), str(tmp_path))
+        assert result == {}
+
+    def test_accepts_base_folder_param(self):
+        import inspect
+        from addaxai.hitl.data import count_annotations_per_class
+        params = inspect.signature(count_annotations_per_class).parameters
+        assert "file_list_path" in params
+        assert "base_folder" in params

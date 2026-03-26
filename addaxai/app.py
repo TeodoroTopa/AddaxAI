@@ -2128,27 +2128,8 @@ def produce_graph(file_list_txt = None, dir = None):
 
     # if a list with images is specified
     if file_list_txt:
-        count_dict = {}
-
-        # loop through the files
-        with open(file_list_txt) as f:
-            for line in f:
-
-                # open xml
-                img = line.rstrip()
-                annotation = return_xml_path(img, var_choose_folder.get())
-                tree = ET.parse(annotation)
-                root = tree.getroot()
-
-                # loop through detections
-                for obj in root.findall('object'):
-
-                    # add detection to dict
-                    name = obj.findtext('name')
-                    if name not in count_dict:
-                        count_dict[name] = 0
-                    count_dict[name] += 1
-            f.close()
+        from addaxai.hitl.data import count_annotations_per_class
+        count_dict = count_annotations_per_class(file_list_txt, var_choose_folder.get())
 
         # create plot
         classes = list(count_dict.keys())
@@ -3028,46 +3009,10 @@ def deploy_speciesnet(chosen_folder, sppnet_output_window, simple_mode = False):
 
     # convert JSON to AddaxAI format if not in timelapse mode
     else:
+        from addaxai.processing.speciesnet import reclassify_speciesnet_detections
         with open(recognition_file) as image_recognition_file_content:
             data = json.load(image_recognition_file_content)
-
-            # fetch and invert label maps
-            cls_label_map = data['classification_categories']
-            det_label_map = data['detection_categories']
-            inverted_cls_label_map = {v: k for k, v in cls_label_map.items()}
-            inverted_det_label_map = {v: k for k, v in det_label_map.items()}
-
-            # add cls classes to det label map
-            # if a model shares category names with MD, add to existing value
-            for k, _ in inverted_cls_label_map.items():
-                if k in inverted_det_label_map.keys():
-                    value = str(inverted_det_label_map[k])
-                    inverted_det_label_map[k] = value
-                else:
-                    inverted_det_label_map[k] = str(len(inverted_det_label_map) + 1)
-
-            # loop and adjust
-            for image in data['images']:
-                if 'detections' in image and image['detections'] is not None:
-                    for detection in image['detections']:
-                        category_id = detection['category']
-                        category_conf = detection['conf']
-                        if category_conf >= cls_detec_thresh and det_label_map[category_id] == "animal":
-                            if 'classifications' in detection:
-                                highest_classification = detection['classifications'][0]
-                                class_idx = highest_classification[0]
-                                class_name = cls_label_map[class_idx]
-                                detec_idx = inverted_det_label_map[class_name]
-                                detection['prev_conf'] = detection["conf"]
-                                detection['prev_category'] = detection['category']
-                                detection["conf"] = highest_classification[1]
-                                detection['category'] = str(detec_idx)
-
-        # write json to be used by AddaxAI
-        data['detection_categories_original'] = data['detection_categories']
-        data['detection_categories'] = {v: k for k, v in inverted_det_label_map.items()}
-
-        # overwrite the file wit adjusted data
+        reclassify_speciesnet_detections(data, cls_detec_thresh)
         with open(recognition_file, "w") as json_file:
             json.dump(data, json_file, indent=1)
 

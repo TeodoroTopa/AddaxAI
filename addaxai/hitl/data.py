@@ -163,3 +163,35 @@ def update_json_from_img_list(
         json.dump(data, json_file, indent=1)
 
     return current
+
+
+def count_annotations_per_class(
+    file_list_path: str,
+    base_folder: str,
+) -> Dict[str, int]:
+    """Count object annotations per class from a file list of images.
+
+    Reads each image path from *file_list_path*, locates its corresponding
+    Pascal VOC XML annotation, and tallies the ``<object><name>`` entries.
+
+    Args:
+        file_list_path: Path to a text file with one image path per line.
+        base_folder:    Project base folder (for locating temp-folder XMLs).
+
+    Returns:
+        Dict mapping class names to occurrence counts.
+    """
+    count_dict: Dict[str, int] = {}
+    with open(file_list_path) as f:
+        for line in f:
+            img = line.rstrip()
+            if not img:
+                continue
+            annotation = return_xml_path(img, base_folder)
+            tree = ET.parse(annotation)
+            root = tree.getroot()
+            for obj in root.findall('object'):
+                name = obj.findtext('name')
+                if name is not None:
+                    count_dict[name] = count_dict.get(name, 0) + 1
+    return count_dict
